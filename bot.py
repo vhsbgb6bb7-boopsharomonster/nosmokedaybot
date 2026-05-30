@@ -48,6 +48,7 @@ def init_db():
             smoked INTEGER,
             sleep INTEGER,
             water INTEGER,
+            food INTEGER,
             rest INTEGER,
             craving INTEGER,
             completed INTEGER DEFAULT 0,
@@ -62,6 +63,11 @@ def init_db():
             PRIMARY KEY (user_id, date)
         )
         """)
+
+        try:
+            conn.execute("ALTER TABLE daily_logs ADD COLUMN food INTEGER")
+        except sqlite3.OperationalError:
+            pass
 
 
 def ensure_user(user_id: int):
@@ -84,7 +90,9 @@ def get_today(user_id: int):
 
 
 def update_log(user_id: int, field: str, value: int):
-    allowed_fields = {"smoked", "sleep", "water", "rest", "craving", "completed"}
+    allowed_fields = {
+        "smoked", "sleep", "water", "food", "rest", "craving", "completed"
+    }
 
     if field not in allowed_fields:
         return
@@ -163,7 +171,7 @@ def yes_no_keyboard(prefix: str):
 async def ask_smoked(user_id: int):
     await bot.send_message(
         user_id,
-        "🚬 Курил сегодня?",
+        "Люба, ты курила сегодня?",
         reply_markup=yes_no_keyboard("smoked")
     )
 
@@ -173,12 +181,12 @@ async def start(message: Message):
     ensure_user(message.from_user.id)
 
     await message.answer(
-        "👋 Добро пожаловать.\n\n"
-        "Я буду помогать отслеживать дни без курения.\n\n"
+        "👋 Люба, привет.\n\n"
+        "Я буду помогать тебе отслеживать дни без курения.\n\n"
         "Команды:\n"
-        "/today — отметить день\n"
+        "/today — отметить сегодняшний день\n"
         "/stats — статистика\n"
-        "/time 14:00 — изменить время"
+        "/time 14:00 — изменить время напоминания"
     )
 
 
@@ -204,7 +212,7 @@ async def stats(message: Message):
     current_streak, best_streak, reminder_time, timezone = row
 
     await message.answer(
-        f"📊 Статистика\n\n"
+        f"📊 Статистика Любы\n\n"
         f"🚭 Сейчас без курения: {current_streak} дн.\n"
         f"🏆 Лучший результат: {best_streak} дн.\n"
         f"⏰ Напоминание: {reminder_time}\n"
@@ -237,7 +245,7 @@ async def set_time(message: Message):
         WHERE user_id = ?
         """, (new_time, message.from_user.id))
 
-    await message.answer(f"✅ Время обновлено: {new_time}")
+    await message.answer(f"✅ Люба, время напоминания обновлено: {new_time}")
 
 
 @router.callback_query(F.data == "smoked:yes")
@@ -255,8 +263,8 @@ async def smoked_yes(callback: CallbackQuery):
         """, (user_id,))
 
     await callback.message.edit_text(
-        "😔 День отмечен как день с курением.\n\n"
-        "Не страшно. Продолжаем дальше."
+        "Понял. Сегодня отмечен день с курением.\n\n"
+        "Люба, это не конец. Завтра продолжаем."
     )
 
     await callback.answer()
@@ -269,7 +277,7 @@ async def smoked_no(callback: CallbackQuery):
     update_log(user_id, "smoked", 0)
 
     await callback.message.edit_text(
-        "😴 Выспался сегодня?",
+        "Отлично. Люба, ты выспалась?",
         reply_markup=yes_no_keyboard("sleep")
     )
 
@@ -282,7 +290,7 @@ async def sleep_answer(callback: CallbackQuery):
     update_log(callback.from_user.id, "sleep", value)
 
     await callback.message.edit_text(
-        "💧 Выпил достаточно воды?",
+        "Ты выпила достаточно воды?",
         reply_markup=yes_no_keyboard("water")
     )
 
@@ -295,7 +303,20 @@ async def water_answer(callback: CallbackQuery):
     update_log(callback.from_user.id, "water", value)
 
     await callback.message.edit_text(
-        "🛌 Был отдых сегодня?",
+        "Ты нормально поела?",
+        reply_markup=yes_no_keyboard("food")
+    )
+
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("food:"))
+async def food_answer(callback: CallbackQuery):
+    value = 1 if callback.data.endswith("yes") else 0
+    update_log(callback.from_user.id, "food", value)
+
+    await callback.message.edit_text(
+        "У тебя был нормальный отдых сегодня?",
         reply_markup=yes_no_keyboard("rest")
     )
 
@@ -308,7 +329,7 @@ async def rest_answer(callback: CallbackQuery):
     update_log(callback.from_user.id, "rest", value)
 
     await callback.message.edit_text(
-        "🔥 Было сильное желание закурить?",
+        "Было сильное желание закурить?",
         reply_markup=yes_no_keyboard("craving")
     )
 
@@ -327,6 +348,7 @@ async def craving_answer(callback: CallbackQuery):
 
     await callback.message.edit_text(
         f"✅ День сохранён.\n\n"
+        f"Люба, сегодня ты справилась.\n\n"
         f"🚭 Текущая серия: {streak} дн.\n"
         f"🏆 Лучший результат: {best} дн."
     )
