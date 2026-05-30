@@ -31,6 +31,7 @@ def get_db():
 
 def init_db():
     with get_db() as conn:
+
         conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -65,33 +66,58 @@ def init_db():
         """)
 
         try:
-            conn.execute("ALTER TABLE daily_logs ADD COLUMN food INTEGER")
+            conn.execute("""
+            ALTER TABLE daily_logs ADD COLUMN food INTEGER
+            """)
         except sqlite3.OperationalError:
             pass
 
 
 def ensure_user(user_id: int):
+
     with get_db() as conn:
+
         conn.execute("""
-        INSERT OR IGNORE INTO users(user_id, reminder_time, timezone)
+        INSERT OR IGNORE INTO users(
+            user_id,
+            reminder_time,
+            timezone
+        )
         VALUES (?, ?, ?)
-        """, (user_id, DEFAULT_TIME, DEFAULT_TIMEZONE))
+        """, (
+            user_id,
+            DEFAULT_TIME,
+            DEFAULT_TIMEZONE
+        ))
 
 
 def get_today(user_id: int):
+
     with get_db() as conn:
-        row = conn.execute(
-            "SELECT timezone FROM users WHERE user_id = ?",
-            (user_id,)
-        ).fetchone()
+
+        row = conn.execute("""
+        SELECT timezone
+        FROM users
+        WHERE user_id = ?
+        """, (user_id,)).fetchone()
 
     timezone = row[0] if row else DEFAULT_TIMEZONE
-    return datetime.now(ZoneInfo(timezone)).date().isoformat()
+
+    return datetime.now(
+        ZoneInfo(timezone)
+    ).date().isoformat()
 
 
 def update_log(user_id: int, field: str, value: int):
+
     allowed_fields = {
-        "smoked", "sleep", "water", "food", "rest", "craving", "completed"
+        "smoked",
+        "sleep",
+        "water",
+        "food",
+        "rest",
+        "craving",
+        "completed"
     }
 
     if field not in allowed_fields:
@@ -100,19 +126,37 @@ def update_log(user_id: int, field: str, value: int):
     today = get_today(user_id)
 
     with get_db() as conn:
+
         conn.execute("""
-        INSERT OR IGNORE INTO daily_logs(user_id, date)
+        INSERT OR IGNORE INTO daily_logs(
+            user_id,
+            date
+        )
         VALUES (?, ?)
-        """, (user_id, today))
+        """, (
+            user_id,
+            today
+        ))
 
         conn.execute(
-            f"UPDATE daily_logs SET {field} = ? WHERE user_id = ? AND date = ?",
-            (value, user_id, today)
+            f"""
+            UPDATE daily_logs
+            SET {field} = ?
+            WHERE user_id = ?
+            AND date = ?
+            """,
+            (
+                value,
+                user_id,
+                today
+            )
         )
 
 
 def calculate_streak(user_id: int):
+
     with get_db() as conn:
+
         rows = conn.execute("""
         SELECT date, smoked
         FROM daily_logs
@@ -123,10 +167,15 @@ def calculate_streak(user_id: int):
     logs = {row[0]: row for row in rows}
 
     streak = 0
-    current_date = datetime.fromisoformat(get_today(user_id)).date()
+
+    current_date = datetime.fromisoformat(
+        get_today(user_id)
+    ).date()
 
     while True:
+
         key = current_date.isoformat()
+
         row = logs.get(key)
 
         if not row:
@@ -141,51 +190,69 @@ def calculate_streak(user_id: int):
             break
 
     with get_db() as conn:
-        row = conn.execute(
-            "SELECT best_streak FROM users WHERE user_id = ?",
-            (user_id,)
-        ).fetchone()
+
+        row = conn.execute("""
+        SELECT best_streak
+        FROM users
+        WHERE user_id = ?
+        """, (user_id,)).fetchone()
 
         old_best = row[0] if row else 0
+
         new_best = max(old_best, streak)
 
         conn.execute("""
         UPDATE users
-        SET current_streak = ?, best_streak = ?
+        SET current_streak = ?,
+            best_streak = ?
         WHERE user_id = ?
-        """, (streak, new_best, user_id))
+        """, (
+            streak,
+            new_best,
+            user_id
+        ))
 
     return streak, new_best
 
 
 def yes_no_keyboard(prefix: str):
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Да", callback_data=f"{prefix}:yes"),
-                InlineKeyboardButton(text="Нет", callback_data=f"{prefix}:no"),
+                InlineKeyboardButton(
+                    text="Да",
+                    callback_data=f"{prefix}:yes"
+                ),
+                InlineKeyboardButton(
+                    text="Нет",
+                    callback_data=f"{prefix}:no"
+                )
             ]
         ]
     )
 
 
 async def ask_smoked(user_id: int):
+
     await bot.send_message(
         user_id,
-        "Люба, ты курила сегодня?",
+        "🌬 Люба, был сегодня кальян?",
         reply_markup=yes_no_keyboard("smoked")
     )
 
 
 @router.message(Command("start"))
 async def start(message: Message):
+
     ensure_user(message.from_user.id)
 
     await message.answer(
         "👋 Люба, привет.\n\n"
-        "Я буду помогать тебе отслеживать дни без курения.\n\n"
+        "Я буду помогать тебе отслеживать "
+        "дни без кальяна.\n\n"
         "Команды:\n"
-        "/today — отметить сегодняшний день\n"
+        "/today — отметить день без кальяна\n"
         "/stats — статистика\n"
         "/time 14:00 — изменить время напоминания"
     )
@@ -193,28 +260,37 @@ async def start(message: Message):
 
 @router.message(Command("today"))
 async def today(message: Message):
+
     ensure_user(message.from_user.id)
+
     await ask_smoked(message.from_user.id)
 
 
 @router.message(Command("stats"))
 async def stats(message: Message):
+
     ensure_user(message.from_user.id)
 
-    streak, best = calculate_streak(message.from_user.id)
+    streak, best = calculate_streak(
+        message.from_user.id
+    )
 
     with get_db() as conn:
+
         row = conn.execute("""
-        SELECT reminder_time, timezone
+        SELECT reminder_time,
+               timezone
         FROM users
         WHERE user_id = ?
-        """, (message.from_user.id,)).fetchone()
+        """, (
+            message.from_user.id,
+        )).fetchone()
 
     reminder_time, timezone = row
 
     await message.answer(
         f"📊 Статистика Любы\n\n"
-        f"🚭 Сейчас без курения: {streak} дн.\n"
+        f"🌬 Сейчас без кальяна: {streak} дн.\n"
         f"🏆 Лучший результат: {best} дн.\n"
         f"⏰ Напоминание: {reminder_time}\n"
         f"🌍 Часовой пояс: {timezone}"
@@ -223,40 +299,59 @@ async def stats(message: Message):
 
 @router.message(Command("time"))
 async def set_time(message: Message):
+
     ensure_user(message.from_user.id)
 
     parts = message.text.split()
 
     if len(parts) != 2:
-        await message.answer("Используй так:\n/time 14:00")
+
+        await message.answer(
+            "Используй так:\n/time 14:00"
+        )
+
         return
 
     new_time = parts[1]
 
     try:
         datetime.strptime(new_time, "%H:%M")
+
     except ValueError:
-        await message.answer("Неверный формат. Пример:\n/time 14:00")
+
+        await message.answer(
+            "Неверный формат.\n"
+            "Пример:\n/time 14:00"
+        )
+
         return
 
     with get_db() as conn:
+
         conn.execute("""
         UPDATE users
         SET reminder_time = ?
         WHERE user_id = ?
-        """, (new_time, message.from_user.id))
+        """, (
+            new_time,
+            message.from_user.id
+        ))
 
-    await message.answer(f"✅ Люба, время напоминания обновлено: {new_time}")
+    await message.answer(
+        f"✅ Люба, время обновлено: {new_time}"
+    )
 
 
 @router.callback_query(F.data == "smoked:yes")
 async def smoked_yes(callback: CallbackQuery):
+
     user_id = callback.from_user.id
 
     update_log(user_id, "smoked", 1)
     update_log(user_id, "completed", 1)
 
     with get_db() as conn:
+
         conn.execute("""
         UPDATE users
         SET current_streak = 0
@@ -264,8 +359,9 @@ async def smoked_yes(callback: CallbackQuery):
         """, (user_id,))
 
     await callback.message.edit_text(
-        "Понял. Сегодня отмечен день с курением.\n\n"
-        "Люба, это не конец. Завтра продолжаем."
+        "Сегодня отмечен день с кальяном.\n\n"
+        "Люба, ничего страшного.\n"
+        "Завтра продолжаем 💪"
     )
 
     await callback.answer()
@@ -273,12 +369,14 @@ async def smoked_yes(callback: CallbackQuery):
 
 @router.callback_query(F.data == "smoked:no")
 async def smoked_no(callback: CallbackQuery):
+
     user_id = callback.from_user.id
 
     update_log(user_id, "smoked", 0)
 
     await callback.message.edit_text(
-        "Отлично. Люба, ты выспалась?",
+        "✨ Отлично.\n\n"
+        "Люба, ты выспалась?",
         reply_markup=yes_no_keyboard("sleep")
     )
 
@@ -287,11 +385,17 @@ async def smoked_no(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("sleep:"))
 async def sleep_answer(callback: CallbackQuery):
+
     value = 1 if callback.data.endswith("yes") else 0
-    update_log(callback.from_user.id, "sleep", value)
+
+    update_log(
+        callback.from_user.id,
+        "sleep",
+        value
+    )
 
     await callback.message.edit_text(
-        "Ты выпила достаточно воды?",
+        "💧 Ты выпила достаточно воды?",
         reply_markup=yes_no_keyboard("water")
     )
 
@@ -300,11 +404,17 @@ async def sleep_answer(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("water:"))
 async def water_answer(callback: CallbackQuery):
+
     value = 1 if callback.data.endswith("yes") else 0
-    update_log(callback.from_user.id, "water", value)
+
+    update_log(
+        callback.from_user.id,
+        "water",
+        value
+    )
 
     await callback.message.edit_text(
-        "Ты нормально поела?",
+        "🍽 Ты нормально поела?",
         reply_markup=yes_no_keyboard("food")
     )
 
@@ -313,11 +423,17 @@ async def water_answer(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("food:"))
 async def food_answer(callback: CallbackQuery):
+
     value = 1 if callback.data.endswith("yes") else 0
-    update_log(callback.from_user.id, "food", value)
+
+    update_log(
+        callback.from_user.id,
+        "food",
+        value
+    )
 
     await callback.message.edit_text(
-        "У тебя был нормальный отдых сегодня?",
+        "🛌 У тебя был нормальный отдых?",
         reply_markup=yes_no_keyboard("rest")
     )
 
@@ -326,11 +442,17 @@ async def food_answer(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("rest:"))
 async def rest_answer(callback: CallbackQuery):
+
     value = 1 if callback.data.endswith("yes") else 0
-    update_log(callback.from_user.id, "rest", value)
+
+    update_log(
+        callback.from_user.id,
+        "rest",
+        value
+    )
 
     await callback.message.edit_text(
-        "Было сильное желание закурить?",
+        "🔥 Было сильное желание кальяна?",
         reply_markup=yes_no_keyboard("craving")
     )
 
@@ -339,7 +461,9 @@ async def rest_answer(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("craving:"))
 async def craving_answer(callback: CallbackQuery):
+
     value = 1 if callback.data.endswith("yes") else 0
+
     user_id = callback.from_user.id
 
     update_log(user_id, "craving", value)
@@ -349,8 +473,8 @@ async def craving_answer(callback: CallbackQuery):
 
     await callback.message.edit_text(
         f"✅ День сохранён.\n\n"
-        f"Люба, сегодня ты справилась.\n\n"
-        f"🚭 Текущая серия: {streak} дн.\n"
+        f"Люба, сегодня ты справилась 🌬\n\n"
+        f"🌬 Текущая серия: {streak} дн.\n"
         f"🏆 Лучший результат: {best} дн."
     )
 
@@ -358,37 +482,60 @@ async def craving_answer(callback: CallbackQuery):
 
 
 async def reminder_loop():
+
     while True:
+
         with get_db() as conn:
+
             users = conn.execute("""
-            SELECT user_id, reminder_time, timezone
+            SELECT user_id,
+                   reminder_time,
+                   timezone
             FROM users
             """).fetchall()
 
         for user_id, reminder_time, timezone in users:
-            now = datetime.now(ZoneInfo(timezone))
+
+            now = datetime.now(
+                ZoneInfo(timezone)
+            )
+
             current_time = now.strftime("%H:%M")
+
             today = now.date().isoformat()
 
             if current_time != reminder_time:
                 continue
 
             with get_db() as conn:
+
                 already_sent = conn.execute("""
-                SELECT 1 FROM reminders_sent
-                WHERE user_id = ? AND date = ?
-                """, (user_id, today)).fetchone()
+                SELECT 1
+                FROM reminders_sent
+                WHERE user_id = ?
+                AND date = ?
+                """, (
+                    user_id,
+                    today
+                )).fetchone()
 
                 if already_sent:
                     continue
 
                 conn.execute("""
-                INSERT INTO reminders_sent(user_id, date)
+                INSERT INTO reminders_sent(
+                    user_id,
+                    date
+                )
                 VALUES (?, ?)
-                """, (user_id, today))
+                """, (
+                    user_id,
+                    today
+                ))
 
             try:
                 await ask_smoked(user_id)
+
             except Exception:
                 pass
 
@@ -396,32 +543,59 @@ async def reminder_loop():
 
 
 async def on_startup(bot: Bot):
+
     init_db()
-    await bot.set_webhook(WEBHOOK_URL)
-    asyncio.create_task(reminder_loop())
+
+    await bot.set_webhook(
+        WEBHOOK_URL
+    )
+
+    asyncio.create_task(
+        reminder_loop()
+    )
 
     print("BOT STARTED")
-    print(f"WEBHOOK URL: {WEBHOOK_URL}")
 
 
 async def health(request):
-    return web.Response(text="Bot is running")
+
+    return web.Response(
+        text="Bot is running"
+    )
 
 
 def main():
-    dp.startup.register(on_startup)
+
+    dp.startup.register(
+        on_startup
+    )
 
     app = web.Application()
-    app.router.add_get("/", health)
+
+    app.router.add_get(
+        "/",
+        health
+    )
 
     SimpleRequestHandler(
         dispatcher=dp,
         bot=bot
-    ).register(app, path="/webhook")
+    ).register(
+        app,
+        path="/webhook"
+    )
 
-    setup_application(app, dp, bot=bot)
+    setup_application(
+        app,
+        dp,
+        bot=bot
+    )
 
-    web.run_app(app, host="0.0.0.0", port=PORT)
+    web.run_app(
+        app,
+        host="0.0.0.0",
+        port=PORT
+    )
 
 
 if __name__ == "__main__":
