@@ -114,13 +114,14 @@ def update_log(user_id: int, field: str, value: int):
 def calculate_streak(user_id: int):
     with get_db() as conn:
         rows = conn.execute("""
-        SELECT date, smoked, completed
+        SELECT date, smoked
         FROM daily_logs
         WHERE user_id = ?
         ORDER BY date DESC
         """, (user_id,)).fetchall()
 
     logs = {row[0]: row for row in rows}
+
     streak = 0
     current_date = datetime.fromisoformat(get_today(user_id)).date()
 
@@ -131,9 +132,9 @@ def calculate_streak(user_id: int):
         if not row:
             break
 
-        _, smoked, completed = row
+        _, smoked = row
 
-        if smoked == 0 and completed == 1:
+        if smoked == 0:
             streak += 1
             current_date -= timedelta(days=1)
         else:
@@ -200,21 +201,21 @@ async def today(message: Message):
 async def stats(message: Message):
     ensure_user(message.from_user.id)
 
-    calculate_streak(message.from_user.id)
+    streak, best = calculate_streak(message.from_user.id)
 
     with get_db() as conn:
         row = conn.execute("""
-        SELECT current_streak, best_streak, reminder_time, timezone
+        SELECT reminder_time, timezone
         FROM users
         WHERE user_id = ?
         """, (message.from_user.id,)).fetchone()
 
-    current_streak, best_streak, reminder_time, timezone = row
+    reminder_time, timezone = row
 
     await message.answer(
         f"📊 Статистика Любы\n\n"
-        f"🚭 Сейчас без курения: {current_streak} дн.\n"
-        f"🏆 Лучший результат: {best_streak} дн.\n"
+        f"🚭 Сейчас без курения: {streak} дн.\n"
+        f"🏆 Лучший результат: {best} дн.\n"
         f"⏰ Напоминание: {reminder_time}\n"
         f"🌍 Часовой пояс: {timezone}"
     )
