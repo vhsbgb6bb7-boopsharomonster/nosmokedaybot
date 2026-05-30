@@ -10,9 +10,10 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
+
 TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.getenv("PORT", 10000))
+WEBHOOK_URL = "https://nosmokedaybot.onrender.com/webhook"
 
 DB_NAME = "smoke_tracker.db"
 DEFAULT_TIME = "14:00"
@@ -83,14 +84,12 @@ def get_today(user_id: int):
 
 
 def update_log(user_id: int, field: str, value: int):
-    today = get_today(user_id)
-
-    allowed_fields = {
-        "smoked", "sleep", "water", "rest", "craving", "completed"
-    }
+    allowed_fields = {"smoked", "sleep", "water", "rest", "craving", "completed"}
 
     if field not in allowed_fields:
         return
+
+    today = get_today(user_id)
 
     with get_db() as conn:
         conn.execute("""
@@ -133,9 +132,10 @@ def calculate_streak(user_id: int):
             break
 
     with get_db() as conn:
-        row = conn.execute("""
-        SELECT best_streak FROM users WHERE user_id = ?
-        """, (user_id,)).fetchone()
+        row = conn.execute(
+            "SELECT best_streak FROM users WHERE user_id = ?",
+            (user_id,)
+        ).fetchone()
 
         old_best = row[0] if row else 0
         new_best = max(old_best, streak)
@@ -191,6 +191,8 @@ async def today(message: Message):
 @router.message(Command("stats"))
 async def stats(message: Message):
     ensure_user(message.from_user.id)
+
+    calculate_streak(message.from_user.id)
 
     with get_db() as conn:
         row = conn.execute("""
@@ -372,9 +374,7 @@ async def reminder_loop():
 
 async def on_startup(bot: Bot):
     init_db()
-
     await bot.set_webhook(WEBHOOK_URL)
-
     asyncio.create_task(reminder_loop())
 
     print("BOT STARTED")
@@ -385,7 +385,7 @@ async def health(request):
     return web.Response(text="Bot is running")
 
 
-async def main():
+def main():
     dp.startup.register(on_startup)
 
     app = web.Application()
@@ -402,4 +402,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
