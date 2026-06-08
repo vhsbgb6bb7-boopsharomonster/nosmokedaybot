@@ -175,14 +175,8 @@ def yes_no_keyboard(prefix: str):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text="Да",
-                    callback_data=f"{prefix}:yes"
-                ),
-                InlineKeyboardButton(
-                    text="Нет",
-                    callback_data=f"{prefix}:no"
-                )
+                InlineKeyboardButton(text="Да", callback_data=f"{prefix}:yes"),
+                InlineKeyboardButton(text="Нет", callback_data=f"{prefix}:no")
             ]
         ]
     )
@@ -350,7 +344,9 @@ async def check_reminders():
         current_time = now.strftime("%H:%M")
         today = now.date().isoformat()
 
-        if current_time != reminder_time:
+        # Важно: теперь не строго 14:00, а любое время после 14:00.
+        # За повторную отправку отвечает таблица reminders_sent.
+        if current_time < reminder_time:
             continue
 
         with get_db() as conn:
@@ -371,9 +367,9 @@ async def check_reminders():
 
         try:
             await ask_smoked(user_id)
-            print(f"Reminder sent to {user_id} at {current_time}")
+            print(f"Reminder sent to {user_id} at {current_time}", flush=True)
         except Exception as e:
-            print(f"Reminder send error for {user_id}: {e}")
+            print(f"Reminder send error for {user_id}: {e}", flush=True)
 
 
 async def reminder_loop():
@@ -381,7 +377,7 @@ async def reminder_loop():
         try:
             await check_reminders()
         except Exception as e:
-            print("Reminder loop error:", e)
+            print("Reminder loop error:", e, flush=True)
 
         await asyncio.sleep(30)
 
@@ -392,14 +388,14 @@ async def on_startup(bot: Bot):
 
     asyncio.create_task(reminder_loop())
 
-    print("BOT STARTED")
+    print("BOT STARTED", flush=True)
 
 
 async def health(request):
     try:
         await check_reminders()
     except Exception as e:
-        print("Health reminder error:", e)
+        print("Health reminder error:", e, flush=True)
 
     return web.Response(text="Bot is running")
 
