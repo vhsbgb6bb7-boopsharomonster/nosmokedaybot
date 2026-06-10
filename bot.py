@@ -1,13 +1,19 @@
 import os
 import asyncio
-import sqlite3
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import aiohttp
 from aiohttp import web
+
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+)
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 
@@ -15,7 +21,9 @@ TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 10000))
 WEBHOOK_URL = "https://nosmokedaybot.onrender.com/webhook"
 
-DB_NAME = "smoke_tracker.db"
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
 DEFAULT_TIME = "14:00"
 DEFAULT_TIMEZONE = "Asia/Vladivostok"
 
@@ -25,72 +33,99 @@ router = Router()
 dp.include_router(router)
 
 
-def get_db():
-    return sqlite3.connect(DB_NAME)
+def headers():
+    return {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
 
 
-def init_db():
-    with get_db() as conn:
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            reminder_time TEXT DEFAULT '14:00',
-            timezone TEXT DEFAULT 'Asia/Vladivostok',
-            current_streak INTEGER DEFAULT 0,
-            best_streak INTEGER DEFAULT 0
-        )
-        """)
-
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS daily_logs (
-            user_id INTEGER,
-            date TEXT,
-            smoked INTEGER,
-            sleep INTEGER,
-            water INTEGER,
-            food INTEGER,
-            rest INTEGER,
-            craving INTEGER,
-            completed INTEGER DEFAULT 0,
-            PRIMARY KEY (user_id, date)
-        )
-        """)
-
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS reminders_sent (
-            user_id INTEGER,
-            date TEXT,
-            PRIMARY KEY (user_id, date)
-        )
-        """)
-
-        try:
-            conn.execute("ALTER TABLE daily_logs ADD COLUMN food INTEGER")
-        except sqlite3.OperationalError:
-            pass
+async def supabase_get(table, params=""):
+    url = f"{SUPABASE_URL}/rest/v1/{table}{params}"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers()) as resp:
+            if resp.status >= 400:
+                text = await resp.text()
+                print("SUPABASE GET ERROR:", resp.status, text, flush=True)
+                return []
+            return await resp.json()
 
 
-def ensure_user(user_id: int):
-    with get_db() as conn:
-        conn.execute("""
-        INSERT OR IGNORE INTO users(user_id, reminder_time, timezone)
-        VALUES (?, ?, ?)
-        """, (user_id, DEFAULT_TIME, DEFAULT_TIMEZONE))
+async def supabase_post(table, data, upsert=False, conflict=None):
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+
+    custom_headers = headers()
+
+    if upsert:
+        custom_headers["Prefer"] = "resolution=merge-duplicates,return=representation"
+        if conflict:
+            url += f"?on_conflict={conflict}"
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=custom_headers, json=data) as resp:
+            if resp.status >= 400:
+                text = await resp.text()
+                print("SUPABASE POST ERROR:", resp.status, text, flush=True)
+                return None
+            return await resp.json()
 
 
-def get_today(user_id: int):
-    with get_db() as conn:
-        row = conn.execute("""
-        SELECT timezone
-        FROM users
-        WHERE user_id = ?
-        """, (user_id,)).fetchone()
+async def supabase_patch(table, params, data):
+    url = f"{SUPABASE_URL}/rest/v1/{table}{params}"
 
-    timezone = row[0] if row else DEFAULT_TIMEZONE
-    return datetime.now(ZoneInfo(timezone)).date().isoformat()
+    async with aiohttp.ClientSession() as session:
+        async with session.patch(url, headers=headers(), json=data) as resp:
+            if resp.status >= 400:
+                text = await resp.text()
+                print("SUPABASE PATCH ERROR:", resp.status, text, flush=True)
+                return None
+            return await resp.json()
 
 
-def update_log(user_id: int, field: str, value: int):
+async def ensure_user(user_id: int):
+    await supabase_post(
+        "users",
+        {
+            "user_id": user_id,
+            "reminder_time": DEFAULT_TIME,
+            "timezone": DEFAULT_TIMEZONE,
+        },
+        upsert=True,
+        conflict="user_id",
+    )
+
+
+async def get_user(user_id: int):
+    rows = await supabase_get(
+        "users",
+        f"?user_id=eq.{user_id}&select=*"
+    )
+
+    if rows:
+        return rows[0]
+
+    await ensure_user(user_id)
+
+    rows = await supabase_get(
+        "users",
+        f"?user_id=eq.{user_id}&select=*"
+    )
+
+    return rows[0]
+
+
+async def get_today(user_id: int):
+    user = await get_user(user_id)
+    timezone = user.get("timezone") or DEFAULT_TIMEZONE
+
+    return datetime.now(
+        ZoneInfo(timezone)
+    ).date().isoformat()
+
+
+async def update_log(user_id: int, field: str, value: int):
     allowed_fields = {
         "smoked",
         "sleep",
@@ -98,43 +133,62 @@ def update_log(user_id: int, field: str, value: int):
         "food",
         "rest",
         "craving",
-        "completed"
+        "completed",
     }
 
     if field not in allowed_fields:
         return
 
-    today = get_today(user_id)
+    today = await get_today(user_id)
 
-    with get_db() as conn:
-        conn.execute("""
-        INSERT OR IGNORE INTO daily_logs(user_id, date)
-        VALUES (?, ?)
-        """, (user_id, today))
-
-        conn.execute(
-            f"""
-            UPDATE daily_logs
-            SET {field} = ?
-            WHERE user_id = ?
-            AND date = ?
-            """,
-            (value, user_id, today)
-        )
+    await supabase_post(
+        "daily_logs",
+        {
+            "user_id": user_id,
+            "date": today,
+            field: value,
+        },
+        upsert=True,
+        conflict="user_id,date",
+    )
 
 
-def calculate_streak(user_id: int):
-    with get_db() as conn:
-        rows = conn.execute("""
-        SELECT date, smoked
-        FROM daily_logs
-        WHERE user_id = ?
-        ORDER BY date DESC
-        """, (user_id,)).fetchall()
+async def get_today_log(user_id: int):
+    today = await get_today(user_id)
 
-    logs = {row[0]: row for row in rows}
+    rows = await supabase_get(
+        "daily_logs",
+        f"?user_id=eq.{user_id}&date=eq.{today}&select=*"
+    )
+
+    return rows[0] if rows else None
+
+
+async def mark_reminder_sent(user_id: int):
+    today = await get_today(user_id)
+
+    await supabase_post(
+        "daily_logs",
+        {
+            "user_id": user_id,
+            "date": today,
+        },
+        upsert=True,
+        conflict="user_id,date",
+    )
+
+
+async def calculate_streak(user_id: int):
+    rows = await supabase_get(
+        "daily_logs",
+        f"?user_id=eq.{user_id}&select=date,smoked&order=date.desc"
+    )
+
+    logs = {row["date"]: row for row in rows}
+
     streak = 0
-    current_date = datetime.fromisoformat(get_today(user_id)).date()
+    today = await get_today(user_id)
+    current_date = datetime.fromisoformat(today).date()
 
     while True:
         key = current_date.isoformat()
@@ -143,40 +197,55 @@ def calculate_streak(user_id: int):
         if not row:
             break
 
-        _, smoked = row
+        smoked = row.get("smoked")
+
+        if smoked is None:
+            current_date -= timedelta(days=1)
+            continue
 
         if smoked == 0:
             streak += 1
             current_date -= timedelta(days=1)
-        else:
-            break
+            continue
 
-    with get_db() as conn:
-        row = conn.execute("""
-        SELECT best_streak
-        FROM users
-        WHERE user_id = ?
-        """, (user_id,)).fetchone()
+        break
 
-        old_best = row[0] if row else 0
-        new_best = max(old_best, streak)
+    return streak
 
-        conn.execute("""
-        UPDATE users
-        SET current_streak = ?,
-            best_streak = ?
-        WHERE user_id = ?
-        """, (streak, new_best, user_id))
 
-    return streak, new_best
+async def calculate_best_streak(user_id: int):
+    rows = await supabase_get(
+        "daily_logs",
+        f"?user_id=eq.{user_id}&select=date,smoked&order=date.asc"
+    )
+
+    best = 0
+    current = 0
+
+    for row in rows:
+        smoked = row.get("smoked")
+
+        if smoked == 0:
+            current += 1
+            best = max(best, current)
+        elif smoked == 1:
+            current = 0
+
+    return best
 
 
 def yes_no_keyboard(prefix: str):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Да", callback_data=f"{prefix}:yes"),
-                InlineKeyboardButton(text="Нет", callback_data=f"{prefix}:no")
+                InlineKeyboardButton(
+                    text="Да",
+                    callback_data=f"{prefix}:yes"
+                ),
+                InlineKeyboardButton(
+                    text="Нет",
+                    callback_data=f"{prefix}:no"
+                ),
             ]
         ]
     )
@@ -192,7 +261,7 @@ async def ask_smoked(user_id: int):
 
 @router.message(Command("start"))
 async def start(message: Message):
-    ensure_user(message.from_user.id)
+    await ensure_user(message.from_user.id)
 
     await message.answer(
         "👋 Люба, привет.\n\n"
@@ -205,15 +274,18 @@ async def start(message: Message):
 
 @router.message(Command("today"))
 async def today(message: Message):
-    ensure_user(message.from_user.id)
+    await ensure_user(message.from_user.id)
     await ask_smoked(message.from_user.id)
 
 
 @router.message(Command("stats"))
 async def stats(message: Message):
-    ensure_user(message.from_user.id)
+    user_id = message.from_user.id
 
-    streak, best = calculate_streak(message.from_user.id)
+    await ensure_user(user_id)
+
+    streak = await calculate_streak(user_id)
+    best = await calculate_best_streak(user_id)
 
     await message.answer(
         f"📊 Статистика Любы\n\n"
@@ -226,15 +298,8 @@ async def stats(message: Message):
 async def smoked_yes(callback: CallbackQuery):
     user_id = callback.from_user.id
 
-    update_log(user_id, "smoked", 1)
-    update_log(user_id, "completed", 1)
-
-    with get_db() as conn:
-        conn.execute("""
-        UPDATE users
-        SET current_streak = 0
-        WHERE user_id = ?
-        """, (user_id,))
+    await update_log(user_id, "smoked", 1)
+    await update_log(user_id, "completed", 1)
 
     await callback.message.edit_text(
         "Сегодня отмечен день с кальяном.\n\n"
@@ -249,7 +314,7 @@ async def smoked_yes(callback: CallbackQuery):
 async def smoked_no(callback: CallbackQuery):
     user_id = callback.from_user.id
 
-    update_log(user_id, "smoked", 0)
+    await update_log(user_id, "smoked", 0)
 
     await callback.message.edit_text(
         "✨ Отлично.\n\n"
@@ -263,7 +328,8 @@ async def smoked_no(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("sleep:"))
 async def sleep_answer(callback: CallbackQuery):
     value = 1 if callback.data.endswith("yes") else 0
-    update_log(callback.from_user.id, "sleep", value)
+
+    await update_log(callback.from_user.id, "sleep", value)
 
     await callback.message.edit_text(
         "💧 Ты выпила достаточно воды?",
@@ -276,7 +342,8 @@ async def sleep_answer(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("water:"))
 async def water_answer(callback: CallbackQuery):
     value = 1 if callback.data.endswith("yes") else 0
-    update_log(callback.from_user.id, "water", value)
+
+    await update_log(callback.from_user.id, "water", value)
 
     await callback.message.edit_text(
         "🍽 Ты нормально поела?",
@@ -289,7 +356,8 @@ async def water_answer(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("food:"))
 async def food_answer(callback: CallbackQuery):
     value = 1 if callback.data.endswith("yes") else 0
-    update_log(callback.from_user.id, "food", value)
+
+    await update_log(callback.from_user.id, "food", value)
 
     await callback.message.edit_text(
         "🛌 У тебя был нормальный отдых?",
@@ -302,7 +370,8 @@ async def food_answer(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("rest:"))
 async def rest_answer(callback: CallbackQuery):
     value = 1 if callback.data.endswith("yes") else 0
-    update_log(callback.from_user.id, "rest", value)
+
+    await update_log(callback.from_user.id, "rest", value)
 
     await callback.message.edit_text(
         "🔥 Было сильное желание кальяна?",
@@ -317,10 +386,11 @@ async def craving_answer(callback: CallbackQuery):
     value = 1 if callback.data.endswith("yes") else 0
     user_id = callback.from_user.id
 
-    update_log(user_id, "craving", value)
-    update_log(user_id, "completed", 1)
+    await update_log(user_id, "craving", value)
+    await update_log(user_id, "completed", 1)
 
-    streak, best = calculate_streak(user_id)
+    streak = await calculate_streak(user_id)
+    best = await calculate_best_streak(user_id)
 
     await callback.message.edit_text(
         f"✅ День сохранён.\n\n"
@@ -333,43 +403,42 @@ async def craving_answer(callback: CallbackQuery):
 
 
 async def check_reminders():
-    with get_db() as conn:
-        users = conn.execute("""
-        SELECT user_id, reminder_time, timezone
-        FROM users
-        """).fetchall()
+    users = await supabase_get(
+        "users",
+        "?select=user_id,reminder_time,timezone"
+    )
 
-    for user_id, reminder_time, timezone in users:
+    for user in users:
+        user_id = user["user_id"]
+        reminder_time = user.get("reminder_time") or DEFAULT_TIME
+        timezone = user.get("timezone") or DEFAULT_TIMEZONE
+
         now = datetime.now(ZoneInfo(timezone))
         current_time = now.strftime("%H:%M")
         today = now.date().isoformat()
 
-        # Важно: теперь не строго 14:00, а любое время после 14:00.
-        # За повторную отправку отвечает таблица reminders_sent.
         if current_time < reminder_time:
             continue
 
-        with get_db() as conn:
-            already_sent = conn.execute("""
-            SELECT 1
-            FROM reminders_sent
-            WHERE user_id = ?
-            AND date = ?
-            """, (user_id, today)).fetchone()
+        today_log = await get_today_log(user_id)
 
-            if already_sent:
-                continue
-
-            conn.execute("""
-            INSERT INTO reminders_sent(user_id, date)
-            VALUES (?, ?)
-            """, (user_id, today))
+        if today_log:
+            continue
 
         try:
+            await mark_reminder_sent(user_id)
             await ask_smoked(user_id)
-            print(f"Reminder sent to {user_id} at {current_time}", flush=True)
+
+            print(
+                f"Reminder sent to {user_id} at {current_time}",
+                flush=True
+            )
+
         except Exception as e:
-            print(f"Reminder send error for {user_id}: {e}", flush=True)
+            print(
+                f"Reminder send error for {user_id}: {e}",
+                flush=True
+            )
 
 
 async def reminder_loop():
@@ -383,7 +452,6 @@ async def reminder_loop():
 
 
 async def on_startup(bot: Bot):
-    init_db()
     await bot.set_webhook(WEBHOOK_URL)
 
     asyncio.create_task(reminder_loop())
