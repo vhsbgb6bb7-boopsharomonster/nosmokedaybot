@@ -8,12 +8,7 @@ from aiohttp import web
 
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import Command
-from aiogram.types import (
-    Message,
-    CallbackQuery,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-)
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 
@@ -24,8 +19,8 @@ WEBHOOK_URL = "https://nosmokedaybot.onrender.com/webhook"
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-DEFAULT_TIME = "14:00"
-DEFAULT_TIMEZONE = "Asia/Vladivostok"
+DEFAULT_TIME = "23:00"
+DEFAULT_TIMEZONE = "Europe/Moscow"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -47,15 +42,13 @@ async def supabase_get(table, params=""):
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers()) as resp:
             if resp.status >= 400:
-                text = await resp.text()
-                print("SUPABASE GET ERROR:", resp.status, text, flush=True)
+                print("SUPABASE GET ERROR:", resp.status, await resp.text(), flush=True)
                 return []
             return await resp.json()
 
 
 async def supabase_post(table, data, upsert=False, conflict=None):
     url = f"{SUPABASE_URL}/rest/v1/{table}"
-
     custom_headers = headers()
 
     if upsert:
@@ -66,20 +59,7 @@ async def supabase_post(table, data, upsert=False, conflict=None):
     async with aiohttp.ClientSession() as session:
         async with session.post(url, headers=custom_headers, json=data) as resp:
             if resp.status >= 400:
-                text = await resp.text()
-                print("SUPABASE POST ERROR:", resp.status, text, flush=True)
-                return None
-            return await resp.json()
-
-
-async def supabase_patch(table, params, data):
-    url = f"{SUPABASE_URL}/rest/v1/{table}{params}"
-
-    async with aiohttp.ClientSession() as session:
-        async with session.patch(url, headers=headers(), json=data) as resp:
-            if resp.status >= 400:
-                text = await resp.text()
-                print("SUPABASE PATCH ERROR:", resp.status, text, flush=True)
+                print("SUPABASE POST ERROR:", resp.status, await resp.text(), flush=True)
                 return None
             return await resp.json()
 
@@ -98,42 +78,24 @@ async def ensure_user(user_id: int):
 
 
 async def get_user(user_id: int):
-    rows = await supabase_get(
-        "users",
-        f"?user_id=eq.{user_id}&select=*"
-    )
-
+    rows = await supabase_get("users", f"?user_id=eq.{user_id}&select=*")
     if rows:
         return rows[0]
 
     await ensure_user(user_id)
-
-    rows = await supabase_get(
-        "users",
-        f"?user_id=eq.{user_id}&select=*"
-    )
-
+    rows = await supabase_get("users", f"?user_id=eq.{user_id}&select=*")
     return rows[0]
 
 
 async def get_today(user_id: int):
     user = await get_user(user_id)
     timezone = user.get("timezone") or DEFAULT_TIMEZONE
-
-    return datetime.now(
-        ZoneInfo(timezone)
-    ).date().isoformat()
+    return datetime.now(ZoneInfo(timezone)).date().isoformat()
 
 
 async def update_log(user_id: int, field: str, value: int):
     allowed_fields = {
-        "smoked",
-        "sleep",
-        "water",
-        "food",
-        "rest",
-        "craving",
-        "completed",
+        "smoked", "sleep", "water", "food", "rest", "craving", "completed"
     }
 
     if field not in allowed_fields:
@@ -238,14 +200,8 @@ def yes_no_keyboard(prefix: str):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text="Да",
-                    callback_data=f"{prefix}:yes"
-                ),
-                InlineKeyboardButton(
-                    text="Нет",
-                    callback_data=f"{prefix}:no"
-                ),
+                InlineKeyboardButton(text="Да", callback_data=f"{prefix}:yes"),
+                InlineKeyboardButton(text="Нет", callback_data=f"{prefix}:no"),
             ]
         ]
     )
@@ -254,7 +210,7 @@ def yes_no_keyboard(prefix: str):
 async def ask_smoked(user_id: int):
     await bot.send_message(
         user_id,
-        "🌬 Люба, был сегодня кальян?",
+        "🚬 Сегодня было курение?",
         reply_markup=yes_no_keyboard("smoked")
     )
 
@@ -264,10 +220,10 @@ async def start(message: Message):
     await ensure_user(message.from_user.id)
 
     await message.answer(
-        "👋 Люба, привет.\n\n"
-        "Я буду помогать тебе отслеживать дни без кальяна.\n\n"
+        "👋 Привет.\n\n"
+        "Я помогу отслеживать дни без курения и формировать полезные привычки.\n\n"
         "Команды:\n"
-        "/today — отметить день без кальяна\n"
+        "/today — отметить сегодняшний день\n"
         "/stats — статистика"
     )
 
@@ -288,8 +244,8 @@ async def stats(message: Message):
     best = await calculate_best_streak(user_id)
 
     await message.answer(
-        f"📊 Статистика Любы\n\n"
-        f"🌬 Сейчас без кальяна: {streak} дн.\n"
+        f"📊 Статистика\n\n"
+        f"🚭 Сейчас без курения: {streak} дн.\n"
         f"🏆 Лучший результат: {best} дн."
     )
 
@@ -302,8 +258,8 @@ async def smoked_yes(callback: CallbackQuery):
     await update_log(user_id, "completed", 1)
 
     await callback.message.edit_text(
-        "Сегодня отмечен день с кальяном.\n\n"
-        "Люба, ничего страшного.\n"
+        "Сегодня отмечен день с курением.\n\n"
+        "Ничего страшного.\n"
         "Завтра продолжаем 💪"
     )
 
@@ -318,7 +274,7 @@ async def smoked_no(callback: CallbackQuery):
 
     await callback.message.edit_text(
         "✨ Отлично.\n\n"
-        "Люба, ты выспалась?",
+        "Ты выспался/выспалась?",
         reply_markup=yes_no_keyboard("sleep")
     )
 
@@ -332,7 +288,7 @@ async def sleep_answer(callback: CallbackQuery):
     await update_log(callback.from_user.id, "sleep", value)
 
     await callback.message.edit_text(
-        "💧 Ты выпила достаточно воды?",
+        "💧 Ты выпил/выпила достаточно воды?",
         reply_markup=yes_no_keyboard("water")
     )
 
@@ -346,7 +302,7 @@ async def water_answer(callback: CallbackQuery):
     await update_log(callback.from_user.id, "water", value)
 
     await callback.message.edit_text(
-        "🍽 Ты нормально поела?",
+        "🍽 Ты нормально поел/поела?",
         reply_markup=yes_no_keyboard("food")
     )
 
@@ -374,7 +330,7 @@ async def rest_answer(callback: CallbackQuery):
     await update_log(callback.from_user.id, "rest", value)
 
     await callback.message.edit_text(
-        "🔥 Было сильное желание кальяна?",
+        "🔥 Было сильное желание закурить?",
         reply_markup=yes_no_keyboard("craving")
     )
 
@@ -394,8 +350,8 @@ async def craving_answer(callback: CallbackQuery):
 
     await callback.message.edit_text(
         f"✅ День сохранён.\n\n"
-        f"Люба, сегодня ты справилась 🌬\n\n"
-        f"🌬 Текущая серия: {streak} дн.\n"
+        f"🚭 Отличный результат!\n\n"
+        f"🔥 Текущая серия: {streak} дн.\n"
         f"🏆 Лучший результат: {best} дн."
     )
 
@@ -415,7 +371,6 @@ async def check_reminders():
 
         now = datetime.now(ZoneInfo(timezone))
         current_time = now.strftime("%H:%M")
-        today = now.date().isoformat()
 
         if current_time < reminder_time:
             continue
