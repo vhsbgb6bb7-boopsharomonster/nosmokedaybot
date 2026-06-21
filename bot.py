@@ -8,7 +8,12 @@ from aiohttp import web
 
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+)
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 
@@ -39,28 +44,35 @@ def headers():
 
 async def supabase_get(table, params=""):
     url = f"{SUPABASE_URL}/rest/v1/{table}{params}"
+
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers()) as resp:
             if resp.status >= 400:
-                print("SUPABASE GET ERROR:", resp.status, await resp.text(), flush=True)
+                text = await resp.text()
+                print("SUPABASE GET ERROR:", resp.status, text, flush=True)
                 return []
+
             return await resp.json()
 
 
 async def supabase_post(table, data, upsert=False, conflict=None):
     url = f"{SUPABASE_URL}/rest/v1/{table}"
+
     custom_headers = headers()
 
     if upsert:
         custom_headers["Prefer"] = "resolution=merge-duplicates,return=representation"
+
         if conflict:
             url += f"?on_conflict={conflict}"
 
     async with aiohttp.ClientSession() as session:
         async with session.post(url, headers=custom_headers, json=data) as resp:
             if resp.status >= 400:
-                print("SUPABASE POST ERROR:", resp.status, await resp.text(), flush=True)
+                text = await resp.text()
+                print("SUPABASE POST ERROR:", resp.status, text, flush=True)
                 return None
+
             return await resp.json()
 
 
@@ -78,24 +90,42 @@ async def ensure_user(user_id: int):
 
 
 async def get_user(user_id: int):
-    rows = await supabase_get("users", f"?user_id=eq.{user_id}&select=*")
+    rows = await supabase_get(
+        "users",
+        f"?user_id=eq.{user_id}&select=*"
+    )
+
     if rows:
         return rows[0]
 
     await ensure_user(user_id)
-    rows = await supabase_get("users", f"?user_id=eq.{user_id}&select=*")
+
+    rows = await supabase_get(
+        "users",
+        f"?user_id=eq.{user_id}&select=*"
+    )
+
     return rows[0]
 
 
 async def get_today(user_id: int):
     user = await get_user(user_id)
     timezone = user.get("timezone") or DEFAULT_TIMEZONE
-    return datetime.now(ZoneInfo(timezone)).date().isoformat()
+
+    return datetime.now(
+        ZoneInfo(timezone)
+    ).date().isoformat()
 
 
 async def update_log(user_id: int, field: str, value: int):
     allowed_fields = {
-        "smoked", "sleep", "water", "food", "rest", "craving", "completed"
+        "smoked",
+        "sleep",
+        "water",
+        "food",
+        "rest",
+        "craving",
+        "completed",
     }
 
     if field not in allowed_fields:
@@ -115,28 +145,29 @@ async def update_log(user_id: int, field: str, value: int):
     )
 
 
-async def get_today_log(user_id: int):
+async def was_reminder_sent(user_id: int):
     today = await get_today(user_id)
 
     rows = await supabase_get(
-        "daily_logs",
-        f"?user_id=eq.{user_id}&date=eq.{today}&select=*"
+        "reminders_sent",
+        f"?user_id=eq.{user_id}&date=eq.{today}&reminder_type=eq.smoke&select=*"
     )
 
-    return rows[0] if rows else None
+    return bool(rows)
 
 
 async def mark_reminder_sent(user_id: int):
     today = await get_today(user_id)
 
     await supabase_post(
-        "daily_logs",
+        "reminders_sent",
         {
             "user_id": user_id,
             "date": today,
+            "reminder_type": "smoke",
         },
         upsert=True,
-        conflict="user_id,date",
+        conflict="user_id,date,reminder_type",
     )
 
 
@@ -190,6 +221,7 @@ async def calculate_best_streak(user_id: int):
         if smoked == 0:
             current += 1
             best = max(best, current)
+
         elif smoked == 1:
             current = 0
 
@@ -200,8 +232,14 @@ def yes_no_keyboard(prefix: str):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Да", callback_data=f"{prefix}:yes"),
-                InlineKeyboardButton(text="Нет", callback_data=f"{prefix}:no"),
+                InlineKeyboardButton(
+                    text="Да",
+                    callback_data=f"{prefix}:yes"
+                ),
+                InlineKeyboardButton(
+                    text="Нет",
+                    callback_data=f"{prefix}:no"
+                ),
             ]
         ]
     )
@@ -221,7 +259,8 @@ async def start(message: Message):
 
     await message.answer(
         "👋 Привет.\n\n"
-        "Я помогу отслеживать дни без курения и формировать полезные привычки.\n\n"
+        "Я помогу отслеживать дни без курения "
+        "и формировать полезные привычки.\n\n"
         "Команды:\n"
         "/today — отметить сегодняшний день\n"
         "/stats — статистика"
@@ -285,7 +324,11 @@ async def smoked_no(callback: CallbackQuery):
 async def sleep_answer(callback: CallbackQuery):
     value = 1 if callback.data.endswith("yes") else 0
 
-    await update_log(callback.from_user.id, "sleep", value)
+    await update_log(
+        callback.from_user.id,
+        "sleep",
+        value
+    )
 
     await callback.message.edit_text(
         "💧 Ты выпил/выпила достаточно воды?",
@@ -299,7 +342,11 @@ async def sleep_answer(callback: CallbackQuery):
 async def water_answer(callback: CallbackQuery):
     value = 1 if callback.data.endswith("yes") else 0
 
-    await update_log(callback.from_user.id, "water", value)
+    await update_log(
+        callback.from_user.id,
+        "water",
+        value
+    )
 
     await callback.message.edit_text(
         "🍽 Ты нормально поел/поела?",
@@ -313,7 +360,11 @@ async def water_answer(callback: CallbackQuery):
 async def food_answer(callback: CallbackQuery):
     value = 1 if callback.data.endswith("yes") else 0
 
-    await update_log(callback.from_user.id, "food", value)
+    await update_log(
+        callback.from_user.id,
+        "food",
+        value
+    )
 
     await callback.message.edit_text(
         "🛌 У тебя был нормальный отдых?",
@@ -327,7 +378,11 @@ async def food_answer(callback: CallbackQuery):
 async def rest_answer(callback: CallbackQuery):
     value = 1 if callback.data.endswith("yes") else 0
 
-    await update_log(callback.from_user.id, "rest", value)
+    await update_log(
+        callback.from_user.id,
+        "rest",
+        value
+    )
 
     await callback.message.edit_text(
         "🔥 Было сильное желание закурить?",
@@ -375,14 +430,14 @@ async def check_reminders():
         if current_time < reminder_time:
             continue
 
-        today_log = await get_today_log(user_id)
+        already_sent = await was_reminder_sent(user_id)
 
-        if today_log:
+        if already_sent:
             continue
 
         try:
-            await mark_reminder_sent(user_id)
             await ask_smoked(user_id)
+            await mark_reminder_sent(user_id)
 
             print(
                 f"Reminder sent to {user_id} at {current_time}",
@@ -400,6 +455,7 @@ async def reminder_loop():
     while True:
         try:
             await check_reminders()
+
         except Exception as e:
             print("Reminder loop error:", e, flush=True)
 
@@ -409,32 +465,44 @@ async def reminder_loop():
 async def on_startup(bot: Bot):
     await bot.set_webhook(WEBHOOK_URL)
 
-    asyncio.create_task(reminder_loop())
+    asyncio.create_task(
+        reminder_loop()
+    )
 
     print("BOT STARTED", flush=True)
 
 
 async def health(request):
-    try:
-        await check_reminders()
-    except Exception as e:
-        print("Health reminder error:", e, flush=True)
-
-    return web.Response(text="Bot is running")
+    return web.Response(
+        text="Bot is running"
+    )
 
 
 def main():
-    dp.startup.register(on_startup)
+    dp.startup.register(
+        on_startup
+    )
 
     app = web.Application()
-    app.router.add_get("/", health)
+
+    app.router.add_get(
+        "/",
+        health
+    )
 
     SimpleRequestHandler(
         dispatcher=dp,
         bot=bot
-    ).register(app, path="/webhook")
+    ).register(
+        app,
+        path="/webhook"
+    )
 
-    setup_application(app, dp, bot=bot)
+    setup_application(
+        app,
+        dp,
+        bot=bot
+    )
 
     web.run_app(
         app,
