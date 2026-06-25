@@ -13,6 +13,8 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
 )
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
@@ -40,6 +42,18 @@ def headers():
         "Content-Type": "application/json",
         "Prefer": "return=representation",
     }
+
+
+def main_menu():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="✅ Отметить день"),
+                KeyboardButton(text="📊 Статистика"),
+            ]
+        ],
+        resize_keyboard=True
+    )
 
 
 async def supabase_get(table, params=""):
@@ -253,6 +267,22 @@ async def ask_smoked(user_id: int):
     )
 
 
+async def send_stats(message: Message):
+    user_id = message.from_user.id
+
+    await ensure_user(user_id)
+
+    streak = await calculate_streak(user_id)
+    best = await calculate_best_streak(user_id)
+
+    await message.answer(
+        f"📊 Статистика\n\n"
+        f"🚭 Сейчас без курения: {streak} дн.\n"
+        f"🏆 Лучший результат: {best} дн.",
+        reply_markup=main_menu()
+    )
+
+
 @router.message(Command("start"))
 async def start(message: Message):
     await ensure_user(message.from_user.id)
@@ -261,9 +291,8 @@ async def start(message: Message):
         "👋 Привет.\n\n"
         "Я помогу отслеживать дни без курения "
         "и формировать полезные привычки.\n\n"
-        "Команды:\n"
-        "/today — отметить сегодняшний день\n"
-        "/stats — статистика"
+        "Теперь можно пользоваться кнопками ниже:",
+        reply_markup=main_menu()
     )
 
 
@@ -275,18 +304,18 @@ async def today(message: Message):
 
 @router.message(Command("stats"))
 async def stats(message: Message):
-    user_id = message.from_user.id
+    await send_stats(message)
 
-    await ensure_user(user_id)
 
-    streak = await calculate_streak(user_id)
-    best = await calculate_best_streak(user_id)
+@router.message(F.text == "✅ Отметить день")
+async def today_button(message: Message):
+    await ensure_user(message.from_user.id)
+    await ask_smoked(message.from_user.id)
 
-    await message.answer(
-        f"📊 Статистика\n\n"
-        f"🚭 Сейчас без курения: {streak} дн.\n"
-        f"🏆 Лучший результат: {best} дн."
-    )
+
+@router.message(F.text == "📊 Статистика")
+async def stats_button(message: Message):
+    await send_stats(message)
 
 
 @router.callback_query(F.data == "smoked:yes")
