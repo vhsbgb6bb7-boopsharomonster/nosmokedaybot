@@ -1,5 +1,6 @@
 import os
 import asyncio
+import random
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -35,6 +36,88 @@ router = Router()
 dp.include_router(router)
 
 
+SUCCESS_PHRASES = [
+    "🌱 Ещё один шаг в правильную сторону.",
+    "🔥 Серия продолжается.",
+    "💪 Хорошая работа. Регулярность решает.",
+    "🚀 Сегодня ты снова выбрал себя.",
+    "🌿 Маленькие действия складываются в большие изменения.",
+    "⭐ Такой день точно идёт в плюс.",
+    "🧱 Ещё один кирпичик в новую привычку.",
+    "👏 Отличный темп. Продолжаем.",
+    "🌤 Сегодня хороший вклад в будущего себя.",
+    "🎯 День отмечен не зря.",
+]
+
+SMOKED_SUPPORT_PHRASES = [
+    "Сегодня получилось не так, как хотелось. Это не отменяет весь путь.",
+    "Один день не определяет результат. Завтра можно начать новую серию.",
+    "Такое бывает. Важно не застрять в этом дне и продолжить завтра.",
+    "Срыв — это не конец. Это просто точка, от которой можно оттолкнуться.",
+    "Ничего страшного. Завтра будет новый шанс.",
+]
+
+SLEEP_YES_PHRASES = [
+    "😴 Отлично. Хороший сон помогает держать курс.",
+    "🌙 Сон — мощная поддержка для силы воли.",
+    "💤 Хорошее восстановление сегодня в плюс.",
+]
+
+SLEEP_NO_PHRASES = [
+    "😴 Сегодня сна было маловато. Завтра попробуй дать себе больше восстановления.",
+    "🌙 Недосып может усиливать тягу. Завтра стоит чуть больше внимания уделить сну.",
+    "💤 Не лучший день по сну. Ничего страшного, завтра можно исправить.",
+]
+
+WATER_YES_PHRASES = [
+    "💧 Отлично. Организм скажет спасибо.",
+    "🚰 Хорошо. Вода — простая привычка, которая реально помогает.",
+    "💦 Нормальный водный баланс — уже плюс к дню.",
+]
+
+WATER_NO_PHRASES = [
+    "💧 Завтра попробуй начать хотя бы с одного дополнительного стакана воды.",
+    "🚰 Воду легко забыть, но она сильно влияет на самочувствие.",
+    "💦 Сегодня воды было мало. Завтра можно сделать лучше.",
+]
+
+FOOD_YES_PHRASES = [
+    "🍽 Отлично. Нормальное питание помогает держать энергию.",
+    "🥗 Хорошо. Стабильная еда — меньше лишнего стресса для организма.",
+    "🍲 Это важная база для хорошего самочувствия.",
+]
+
+FOOD_NO_PHRASES = [
+    "🍽 Завтра постарайся найти время хотя бы на один нормальный приём пищи.",
+    "🥗 Питание сегодня просело. Это не критично, но лучше не запускать.",
+    "🍲 Завтра можно сделать день ровнее по еде.",
+]
+
+REST_YES_PHRASES = [
+    "🛌 Отлично. Отдых — это восстановление, а не слабость.",
+    "🌿 Хорошо. Без отдыха сложно держать длинную серию.",
+    "🔋 Нормальный отдых помогает не перегореть.",
+]
+
+REST_NO_PHRASES = [
+    "🛌 Завтра попробуй выделить хотя бы немного времени для себя.",
+    "🔋 Похоже, сегодня было мало восстановления. Это стоит поправить.",
+    "🌿 Отдых тоже часть прогресса. Не забывай про него.",
+]
+
+CRAVING_YES_PHRASES = [
+    "🔥 Сегодня было непросто, но ты всё равно дошёл до конца опроса.",
+    "🔥 Тяга была — значит день был сложнее. Тем ценнее результат.",
+    "🔥 Хорошо, что ты это отметил. Такие данные потом помогут лучше понять себя.",
+]
+
+CRAVING_NO_PHRASES = [
+    "🔥 Отлично. Сегодня тяга почти не мешала.",
+    "😌 Хороший знак. День прошёл спокойнее.",
+    "🌿 Отлично. Чем меньше тяги, тем легче закрепляется привычка.",
+]
+
+
 def headers():
     return {
         "apikey": SUPABASE_KEY,
@@ -53,6 +136,21 @@ def main_menu():
             ]
         ],
         resize_keyboard=True
+    )
+
+
+def pick(items):
+    return random.choice(items)
+
+
+def yes_no_keyboard(prefix: str):
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Да", callback_data=f"{prefix}:yes"),
+                InlineKeyboardButton(text="Нет", callback_data=f"{prefix}:no"),
+            ]
+        ]
     )
 
 
@@ -129,6 +227,17 @@ async def get_today(user_id: int):
     return datetime.now(
         ZoneInfo(timezone)
     ).date().isoformat()
+
+
+async def get_today_log(user_id: int):
+    today = await get_today(user_id)
+
+    rows = await supabase_get(
+        "daily_logs",
+        f"?user_id=eq.{user_id}&date=eq.{today}&select=*"
+    )
+
+    return rows[0] if rows else None
 
 
 async def update_log(user_id: int, field: str, value: int):
@@ -220,7 +329,9 @@ async def calculate_streak(user_id: int):
     return streak
 
 
-async def calculate_best_streak(user_id: int):
+async def calculate_best_streak(user_id: int, exclude_today=False):
+    today = await get_today(user_id)
+
     rows = await supabase_get(
         "daily_logs",
         f"?user_id=eq.{user_id}&select=date,smoked&order=date.asc"
@@ -230,6 +341,9 @@ async def calculate_best_streak(user_id: int):
     current = 0
 
     for row in rows:
+        if exclude_today and row.get("date") == today:
+            continue
+
         smoked = row.get("smoked")
 
         if smoked == 0:
@@ -242,21 +356,42 @@ async def calculate_best_streak(user_id: int):
     return best
 
 
-def yes_no_keyboard(prefix: str):
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Да",
-                    callback_data=f"{prefix}:yes"
-                ),
-                InlineKeyboardButton(
-                    text="Нет",
-                    callback_data=f"{prefix}:no"
-                ),
-            ]
-        ]
+async def get_path_event(user_id: int):
+    rows = await supabase_get(
+        "daily_logs",
+        f"?user_id=eq.{user_id}&select=date&order=date.asc&limit=1"
     )
+
+    if not rows:
+        return ""
+
+    first_date = datetime.fromisoformat(rows[0]["date"]).date()
+    today = datetime.fromisoformat(await get_today(user_id)).date()
+    days = (today - first_date).days
+
+    events = {
+        7: "🎉 Сегодня ровно неделя с твоего первого дня.",
+        30: "🎉 Сегодня ровно месяц с твоего первого дня.",
+        100: "🎉 Сегодня уже 100 дней с начала твоего пути.",
+        180: "🚀 Сегодня прошло полгода с начала твоего пути.",
+        365: "👑 Сегодня ровно год с начала твоего пути.",
+    }
+
+    return events.get(days, "")
+
+
+def milestone_message(streak: int):
+    milestones = {
+        1: "🎉 Первый шаг сделан.",
+        3: "🥉 Уже три дня подряд. Хорошее начало.",
+        7: "🥈 Первая неделя позади. Это уже серьёзный шаг.",
+        14: "🥇 Две недели подряд. Привычка становится крепче.",
+        30: "💎 Первый месяц. Это сильный результат.",
+        180: "🚀 Полгода. Очень мощная серия.",
+        365: "👑 Год. Это уже настоящая легенда.",
+    }
+
+    return milestones.get(streak, "")
 
 
 async def ask_smoked(user_id: int):
@@ -274,11 +409,19 @@ async def send_stats(message: Message):
 
     streak = await calculate_streak(user_id)
     best = await calculate_best_streak(user_id)
+    path_event = await get_path_event(user_id)
 
-    await message.answer(
+    text = (
         f"📊 Статистика\n\n"
         f"🚭 Сейчас без курения: {streak} дн.\n"
-        f"🏆 Лучший результат: {best} дн.",
+        f"🏆 Лучший результат: {best} дн."
+    )
+
+    if path_event:
+        text += f"\n\n{path_event}"
+
+    await message.answer(
+        text,
         reply_markup=main_menu()
     )
 
@@ -291,7 +434,8 @@ async def start(message: Message):
         "👋 Привет.\n\n"
         "Я помогу отслеживать дни без курения "
         "и формировать полезные привычки.\n\n"
-        "Теперь можно пользоваться кнопками ниже:",
+        "Сильная жизнь начинается с сильных привычек.\n\n"
+        "Можно пользоваться кнопками ниже:",
         reply_markup=main_menu()
     )
 
@@ -326,9 +470,9 @@ async def smoked_yes(callback: CallbackQuery):
     await update_log(user_id, "completed", 1)
 
     await callback.message.edit_text(
-        "Сегодня отмечен день с курением.\n\n"
-        "Ничего страшного.\n"
-        "Завтра продолжаем 💪"
+        f"Сегодня отмечен день с курением.\n\n"
+        f"{pick(SMOKED_SUPPORT_PHRASES)}\n\n"
+        f"Завтра продолжаем 💪"
     )
 
     await callback.answer()
@@ -341,8 +485,8 @@ async def smoked_no(callback: CallbackQuery):
     await update_log(user_id, "smoked", 0)
 
     await callback.message.edit_text(
-        "✨ Отлично.\n\n"
-        "Ты выспался/выспалась?",
+        f"{pick(SUCCESS_PHRASES)}\n\n"
+        f"😴 Как сегодня со сном? Удалось выспаться?",
         reply_markup=yes_no_keyboard("sleep")
     )
 
@@ -359,8 +503,11 @@ async def sleep_answer(callback: CallbackQuery):
         value
     )
 
+    phrase = pick(SLEEP_YES_PHRASES if value else SLEEP_NO_PHRASES)
+
     await callback.message.edit_text(
-        "💧 Ты выпил/выпила достаточно воды?",
+        f"{phrase}\n\n"
+        f"💧 Как сегодня с водой? Получилось выпить достаточно?",
         reply_markup=yes_no_keyboard("water")
     )
 
@@ -377,8 +524,11 @@ async def water_answer(callback: CallbackQuery):
         value
     )
 
+    phrase = pick(WATER_YES_PHRASES if value else WATER_NO_PHRASES)
+
     await callback.message.edit_text(
-        "🍽 Ты нормально поел/поела?",
+        f"{phrase}\n\n"
+        f"🍽 Как сегодня с питанием? Получилось нормально поесть?",
         reply_markup=yes_no_keyboard("food")
     )
 
@@ -395,8 +545,11 @@ async def food_answer(callback: CallbackQuery):
         value
     )
 
+    phrase = pick(FOOD_YES_PHRASES if value else FOOD_NO_PHRASES)
+
     await callback.message.edit_text(
-        "🛌 У тебя был нормальный отдых?",
+        f"{phrase}\n\n"
+        f"🛌 Был ли сегодня нормальный отдых?",
         reply_markup=yes_no_keyboard("rest")
     )
 
@@ -413,8 +566,11 @@ async def rest_answer(callback: CallbackQuery):
         value
     )
 
+    phrase = pick(REST_YES_PHRASES if value else REST_NO_PHRASES)
+
     await callback.message.edit_text(
-        "🔥 Было сильное желание закурить?",
+        f"{phrase}\n\n"
+        f"🔥 Было сильное желание закурить?",
         reply_markup=yes_no_keyboard("craving")
     )
 
@@ -426,18 +582,35 @@ async def craving_answer(callback: CallbackQuery):
     value = 1 if callback.data.endswith("yes") else 0
     user_id = callback.from_user.id
 
+    previous_log = await get_today_log(user_id)
+    already_completed = bool(previous_log and previous_log.get("completed") == 1)
+
     await update_log(user_id, "craving", value)
     await update_log(user_id, "completed", 1)
 
     streak = await calculate_streak(user_id)
-    best = await calculate_best_streak(user_id)
+    old_best = await calculate_best_streak(user_id, exclude_today=True)
+    best = max(streak, old_best)
 
-    await callback.message.edit_text(
+    phrase = pick(CRAVING_YES_PHRASES if value else CRAVING_NO_PHRASES)
+    milestone = milestone_message(streak) if not already_completed else ""
+    new_record = streak > old_best and streak > 1 and not already_completed
+
+    text = (
         f"✅ День сохранён.\n\n"
-        f"🚭 Отличный результат!\n\n"
+        f"{phrase}\n\n"
+        f"{pick(SUCCESS_PHRASES)}\n\n"
         f"🔥 Текущая серия: {streak} дн.\n"
         f"🏆 Лучший результат: {best} дн."
     )
+
+    if new_record:
+        text += f"\n\n🎉 Новый личный рекорд: {streak} дн."
+
+    if milestone:
+        text += f"\n\n{milestone}"
+
+    await callback.message.edit_text(text)
 
     await callback.answer()
 
