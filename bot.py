@@ -167,18 +167,15 @@ async def supabase_get(table, params=""):
                 text = await resp.text()
                 print("SUPABASE GET ERROR:", resp.status, text, flush=True)
                 return []
-
             return await resp.json()
 
 
 async def supabase_post(table, data, upsert=False, conflict=None):
     url = f"{SUPABASE_URL}/rest/v1/{table}"
-
     custom_headers = headers()
 
     if upsert:
         custom_headers["Prefer"] = "resolution=merge-duplicates,return=representation"
-
         if conflict:
             url += f"?on_conflict={conflict}"
 
@@ -188,7 +185,6 @@ async def supabase_post(table, data, upsert=False, conflict=None):
                 text = await resp.text()
                 print("SUPABASE POST ERROR:", resp.status, text, flush=True)
                 return None
-
             return await resp.json()
 
 
@@ -201,7 +197,6 @@ async def supabase_patch(table, params, data):
                 text = await resp.text()
                 print("SUPABASE PATCH ERROR:", resp.status, text, flush=True)
                 return None
-
             return await resp.json()
 
 
@@ -219,31 +214,21 @@ async def ensure_user(user_id: int):
 
 
 async def get_user(user_id: int):
-    rows = await supabase_get(
-        "users",
-        f"?user_id=eq.{user_id}&select=*"
-    )
+    rows = await supabase_get("users", f"?user_id=eq.{user_id}&select=*")
 
     if rows:
         return rows[0]
 
     await ensure_user(user_id)
 
-    rows = await supabase_get(
-        "users",
-        f"?user_id=eq.{user_id}&select=*"
-    )
-
+    rows = await supabase_get("users", f"?user_id=eq.{user_id}&select=*")
     return rows[0]
 
 
 async def get_today(user_id: int):
     user = await get_user(user_id)
     timezone = user.get("timezone") or DEFAULT_TIMEZONE
-
-    return datetime.now(
-        ZoneInfo(timezone)
-    ).date().isoformat()
+    return datetime.now(ZoneInfo(timezone)).date().isoformat()
 
 
 async def get_today_log(user_id: int):
@@ -330,12 +315,22 @@ def calculate_willpower_delta(log):
     return points
 
 
+def visible_day_points(log, delta):
+    if not log:
+        return 0
+
+    if log.get("smoked") == 1:
+        return 0
+
+    return max(0, delta)
+
+
 async def apply_willpower_points(user_id: int):
     user = await get_user(user_id)
     today_log = await get_today_log(user_id)
 
     if not today_log:
-        return 0, user.get("willpower_points") or 0
+        return 0, user.get("willpower_points") or 0, 0
 
     old_delta = today_log.get("willpower_delta") or 0
     new_delta = calculate_willpower_delta(today_log)
@@ -351,12 +346,12 @@ async def apply_willpower_points(user_id: int):
     await supabase_patch(
         "users",
         f"?user_id=eq.{user_id}",
-        {
-            "willpower_points": updated_total
-        }
+        {"willpower_points": updated_total}
     )
 
-    return new_delta, updated_total
+    shown_delta = visible_day_points(today_log, new_delta)
+
+    return new_delta, updated_total, shown_delta
 
 
 async def was_reminder_sent(user_id: int):
@@ -632,12 +627,12 @@ async def smoked_yes(callback: CallbackQuery):
     await update_log(user_id, "smoked", 1)
     await update_log(user_id, "completed", 1)
 
-    delta, total = await apply_willpower_points(user_id)
+    _, total, shown_delta = await apply_willpower_points(user_id)
 
     await callback.message.edit_text(
         f"Сегодня отмечен день с курением.\n\n"
         f"{pick(SMOKED_SUPPORT_PHRASES)}\n\n"
-        f"💪 Очки воли за день: {delta}\n"
+        f"💪 Очки воли за день: {shown_delta}\n"
         f"Всего: {total}\n\n"
         f"Завтра продолжаем."
     )
@@ -664,11 +659,7 @@ async def smoked_no(callback: CallbackQuery):
 async def sleep_answer(callback: CallbackQuery):
     value = 1 if callback.data.endswith("yes") else 0
 
-    await update_log(
-        callback.from_user.id,
-        "sleep",
-        value
-    )
+    await update_log(callback.from_user.id, "sleep", value)
 
     phrase = pick(SLEEP_YES_PHRASES if value else SLEEP_NO_PHRASES)
 
@@ -685,11 +676,7 @@ async def sleep_answer(callback: CallbackQuery):
 async def water_answer(callback: CallbackQuery):
     value = 1 if callback.data.endswith("yes") else 0
 
-    await update_log(
-        callback.from_user.id,
-        "water",
-        value
-    )
+    await update_log(callback.from_user.id, "water", value)
 
     phrase = pick(WATER_YES_PHRASES if value else WATER_NO_PHRASES)
 
@@ -706,11 +693,7 @@ async def water_answer(callback: CallbackQuery):
 async def food_answer(callback: CallbackQuery):
     value = 1 if callback.data.endswith("yes") else 0
 
-    await update_log(
-        callback.from_user.id,
-        "food",
-        value
-    )
+    await update_log(callback.from_user.id, "food", value)
 
     phrase = pick(FOOD_YES_PHRASES if value else FOOD_NO_PHRASES)
 
@@ -727,11 +710,7 @@ async def food_answer(callback: CallbackQuery):
 async def rest_answer(callback: CallbackQuery):
     value = 1 if callback.data.endswith("yes") else 0
 
-    await update_log(
-        callback.from_user.id,
-        "rest",
-        value
-    )
+    await update_log(callback.from_user.id, "rest", value)
 
     phrase = pick(REST_YES_PHRASES if value else REST_NO_PHRASES)
 
@@ -757,7 +736,7 @@ async def craving_answer(callback: CallbackQuery):
 
     today_log = await get_today_log(user_id)
 
-    delta, total = await apply_willpower_points(user_id)
+    _, total, shown_delta = await apply_willpower_points(user_id)
 
     today_log = await get_today_log(user_id)
 
@@ -775,7 +754,7 @@ async def craving_answer(callback: CallbackQuery):
         f"{get_context_thought(today_log)}\n\n"
         f"{get_tomorrow_advice(today_log)}\n\n"
         f"━━━━━━━━━━━━━━\n\n"
-        f"💪 Очки воли за день: {delta}\n"
+        f"💪 Очки воли за день: +{shown_delta}\n"
         f"Всего: {total}\n\n"
         f"🔥 Серия — {streak} дн.\n"
         f"🏆 Рекорд — {best} дн.\n\n"
@@ -855,22 +834,15 @@ async def on_startup(bot: Bot):
 
 
 async def health(request):
-    return web.Response(
-        text="Bot is running"
-    )
+    return web.Response(text="Bot is running")
 
 
 def main():
-    dp.startup.register(
-        on_startup
-    )
+    dp.startup.register(on_startup)
 
     app = web.Application()
 
-    app.router.add_get(
-        "/",
-        health
-    )
+    app.router.add_get("/", health)
 
     SimpleRequestHandler(
         dispatcher=dp,
@@ -880,11 +852,7 @@ def main():
         path="/webhook"
     )
 
-    setup_application(
-        app,
-        dp,
-        bot=bot
-    )
+    setup_application(app, dp, bot=bot)
 
     web.run_app(
         app,
