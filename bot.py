@@ -113,18 +113,6 @@ REST_NO_PHRASES = [
     "🌿 Отдых тоже часть прогресса. Не забывай про него.",
 ]
 
-CRAVING_YES_PHRASES = [
-    "🔥 Тяга сегодня была заметной.",
-    "🔥 День был сложнее из-за желания закурить.",
-    "🔥 Хорошо, что тяга отмечена. Такие данные потом помогут лучше понять себя.",
-]
-
-CRAVING_NO_PHRASES = [
-    "😌 Тяга сегодня почти не мешала.",
-    "🌿 День прошёл спокойнее.",
-    "🔥 Сегодня желание закурить было слабее.",
-]
-
 ENDING_PHRASES = [
     "Продолжаем завтра.",
     "Следующий день уже ждёт.",
@@ -204,6 +192,19 @@ async def supabase_post(table, data, upsert=False, conflict=None):
             return await resp.json()
 
 
+async def supabase_patch(table, params, data):
+    url = f"{SUPABASE_URL}/rest/v1/{table}{params}"
+
+    async with aiohttp.ClientSession() as session:
+        async with session.patch(url, headers=headers(), json=data) as resp:
+            if resp.status >= 400:
+                text = await resp.text()
+                print("SUPABASE PATCH ERROR:", resp.status, text, flush=True)
+                return None
+
+            return await resp.json()
+
+
 async def ensure_user(user_id: int):
     await supabase_post(
         "users",
@@ -265,6 +266,7 @@ async def update_log(user_id: int, field: str, value: int):
         "rest",
         "craving",
         "completed",
+        "willpower_delta",
     }
 
     if field not in allowed_fields:
@@ -282,6 +284,79 @@ async def update_log(user_id: int, field: str, value: int):
         upsert=True,
         conflict="user_id,date",
     )
+
+
+def calculate_willpower_delta(log):
+    if not log:
+        return 0
+
+    smoked = log.get("smoked")
+    sleep = log.get("sleep")
+    water = log.get("water")
+    food = log.get("food")
+    rest = log.get("rest")
+    craving = log.get("craving")
+
+    points = 0
+
+    if smoked == 0:
+        points += 10
+    elif smoked == 1:
+        points -= 10
+
+    if sleep == 1:
+        points += 2
+    elif sleep == 0:
+        points -= 1
+
+    if water == 1:
+        points += 2
+    elif water == 0:
+        points -= 1
+
+    if food == 1:
+        points += 2
+    elif food == 0:
+        points -= 1
+
+    if rest == 1:
+        points += 2
+    elif rest == 0:
+        points -= 1
+
+    if smoked == 0 and craving == 1:
+        points += 3
+
+    return points
+
+
+async def apply_willpower_points(user_id: int):
+    user = await get_user(user_id)
+    today_log = await get_today_log(user_id)
+
+    if not today_log:
+        return 0, user.get("willpower_points") or 0
+
+    old_delta = today_log.get("willpower_delta") or 0
+    new_delta = calculate_willpower_delta(today_log)
+
+    current_total = user.get("willpower_points") or 0
+    updated_total = current_total - old_delta + new_delta
+
+    if updated_total < 0:
+        updated_total = 0
+
+    await update_log(user_id, "willpower_delta", new_delta)
+
+    await supabase_patch(
+        "users",
+        f"?user_id=eq.{user_id}",
+        {
+            "willpower_points": updated_total
+        }
+    )
+
+    return new_delta, updated_total
 
 
 async def was_reminder_sent(user_id: int):
@@ -372,44 +447,6 @@ async def calculate_best_streak(user_id: int, exclude_today=False):
     return best
 
 
-async def get_path_event(user_id: int):
-    rows = await supabase_get(
-        "daily_logs",
-        f"?user_id=eq.{user_id}&select=date&order=date.asc&limit=1"
-    )
-
-    if not rows:
-        return ""
-
-    first_date = datetime.fromisoformat(rows[0]["date"]).date()
-    today = datetime.fromisoformat(await get_today(user_id)).date()
-    days = (today - first_date).days
-
-    events = {
-        7: "🎉 Сегодня ровно неделя с твоего первого дня.",
-        30: "🎉 Сегодня ровно месяц с твоего первого дня.",
-        100: "🎉 Сегодня уже 100 дней с начала твоего пути.",
-        180: "🚀 Сегодня прошло полгода с начала твоего пути.",
-        365: "👑 Сегодня ровно год с начала твоего пути.",
-    }
-
-    return events.get(days, "")
-
-
-def milestone_message(streak: int):
-    milestones = {
-        1: "🎉 Первый шаг сделан.",
-        3: "🥉 Уже три дня подряд.",
-        7: "🥈 Первая неделя позади.",
-        14: "🥇 Две недели подряд.",
-        30: "💎 Первый месяц.",
-        180: "🚀 Полгода.",
-        365: "👑 Год.",
-    }
-
-    return milestones.get(streak, "")
-
-
 def next_goal_text(streak: int):
     goals = [
         (3, "🥉 3 дня"),
@@ -426,6 +463,20 @@ def next_goal_text(streak: int):
             return f"🎯 Следующая цель: {title}\nОсталось: {left} дн."
 
     return "🎯 Следующая цель: 🔥 1000 дней\nПуть продолжается."
+
+
+def milestone_message(streak: int):
+    milestones = {
+        1: "🎉 Первый шаг сделан.",
+        3: "🥉 Уже три дня подряд.",
+        7: "🥈 Первая неделя позади.",
+        14: "🥇 Две недели подряд.",
+        30: "💎 Первый месяц.",
+        180: "🚀 Полгода.",
+        365: "👑 Год.",
+    }
+
+    return milestones.get(streak, "")
 
 
 def day_summary(log):
@@ -519,19 +570,18 @@ async def send_stats(message: Message):
 
     await ensure_user(user_id)
 
+    user = await get_user(user_id)
     streak = await calculate_streak(user_id)
     best = await calculate_best_streak(user_id)
-    path_event = await get_path_event(user_id)
+    willpower = user.get("willpower_points") or 0
 
     text = (
         f"📊 Статистика\n\n"
         f"🚭 Сейчас без курения: {streak} дн.\n"
-        f"🏆 Лучший результат: {best} дн.\n\n"
+        f"🏆 Лучший результат: {best} дн.\n"
+        f"💪 Очки воли: {willpower}\n\n"
         f"{next_goal_text(streak)}"
     )
-
-    if path_event:
-        text += f"\n\n{path_event}"
 
     await message.answer(
         text,
@@ -582,9 +632,13 @@ async def smoked_yes(callback: CallbackQuery):
     await update_log(user_id, "smoked", 1)
     await update_log(user_id, "completed", 1)
 
+    delta, total = await apply_willpower_points(user_id)
+
     await callback.message.edit_text(
         f"Сегодня отмечен день с курением.\n\n"
         f"{pick(SMOKED_SUPPORT_PHRASES)}\n\n"
+        f"💪 Очки воли за день: {delta}\n"
+        f"Всего: {total}\n\n"
         f"Завтра продолжаем."
     )
 
@@ -703,6 +757,10 @@ async def craving_answer(callback: CallbackQuery):
 
     today_log = await get_today_log(user_id)
 
+    delta, total = await apply_willpower_points(user_id)
+
+    today_log = await get_today_log(user_id)
+
     streak = await calculate_streak(user_id)
     old_best = await calculate_best_streak(user_id, exclude_today=True)
     best = max(streak, old_best)
@@ -717,6 +775,8 @@ async def craving_answer(callback: CallbackQuery):
         f"{get_context_thought(today_log)}\n\n"
         f"{get_tomorrow_advice(today_log)}\n\n"
         f"━━━━━━━━━━━━━━\n\n"
+        f"💪 Очки воли за день: {delta}\n"
+        f"Всего: {total}\n\n"
         f"🔥 Серия — {streak} дн.\n"
         f"🏆 Рекорд — {best} дн.\n\n"
         f"{next_goal_text(streak)}"
