@@ -65,12 +65,6 @@ SMOKED_SUPPORT_PHRASES = [
     "Сегодня был непростой день. Всё ещё впереди.",
 ]
 
-SMOKED_WITH_CARE_PHRASES = [
-    "Сегодня был срыв, но часть опор всё равно удалось сохранить.",
-    "Серия закончилась, но забота о себе сегодня всё равно имеет значение.",
-    "Да, сегодня было курение. Но сон, вода, питание или отдых всё равно помогают вернуться в ритм.",
-]
-
 SLEEP_YES_PHRASES = [
     "😴 Сон сегодня поддержал восстановление.",
     "🌙 Хороший сон — сильная база для следующего дня.",
@@ -248,11 +242,6 @@ async def get_today_log(user_id: int):
     return rows[0] if rows else None
 
 
-async def is_today_completed(user_id: int):
-    log = await get_today_log(user_id)
-    return bool(log and log.get("completed") == 1)
-
-
 async def update_log(user_id: int, field: str, value: int):
     allowed_fields = {
         "smoked",
@@ -287,13 +276,17 @@ def calculate_willpower_delta(log):
         return 0
 
     smoked = log.get("smoked")
+
+    if smoked == 1:
+        return -10
+
     sleep = log.get("sleep")
     water = log.get("water")
     food = log.get("food")
     rest = log.get("rest")
     craving = log.get("craving")
 
-    points = -10 if smoked == 1 else 10
+    points = 10
 
     if sleep == 1:
         points += 2
@@ -315,7 +308,7 @@ def calculate_willpower_delta(log):
     elif rest == 0:
         points -= 1
 
-    if smoked == 0 and craving == 1:
+    if craving == 1:
         points += 3
 
     return points
@@ -329,6 +322,13 @@ def visible_day_points(log, delta):
         return 0
 
     return max(0, delta)
+
+
+def format_day_points(points: int):
+    if points > 0:
+        return f"+{points}"
+
+    return "0"
 
 
 async def apply_willpower_points(user_id: int):
@@ -516,11 +516,6 @@ def get_context_thought(log):
     craving = log.get("craving")
 
     if smoked == 1:
-        positive_care = sum(1 for value in [sleep, water, food, rest] if value == 1)
-
-        if positive_care >= 2:
-            return pick(SMOKED_WITH_CARE_PHRASES)
-
         return pick(SMOKED_SUPPORT_PHRASES)
 
     problems = 0
@@ -532,7 +527,7 @@ def get_context_thought(log):
     if craving == 1:
         problems += 1
 
-    if problems >= 4:
+    if problems >= 3:
         return pick(HARD_DAY_THOUGHTS)
 
     if craving == 1:
@@ -577,16 +572,6 @@ def get_tomorrow_advice(log):
 
 
 async def ask_smoked(user_id: int):
-    await ensure_user(user_id)
-
-    if await is_today_completed(user_id):
-        await bot.send_message(
-            user_id,
-            "Сегодняшний день уже сохранён. Новое отмечание не требуется.",
-            reply_markup=main_menu()
-        )
-        return
-
     await bot.send_message(
         user_id,
         "🚬 Сегодня было курение?",
@@ -618,14 +603,6 @@ async def send_stats(message: Message):
     )
 
 
-async def stop_if_completed(callback: CallbackQuery):
-    if await is_today_completed(callback.from_user.id):
-        await callback.answer("Сегодняшний день уже сохранён.", show_alert=False)
-        return True
-
-    return False
-
-
 @router.message(Command("start"))
 async def start(message: Message):
     await ensure_user(message.from_user.id)
@@ -642,6 +619,7 @@ async def start(message: Message):
 
 @router.message(Command("today"))
 async def today(message: Message):
+    await ensure_user(message.from_user.id)
     await ask_smoked(message.from_user.id)
 
 
@@ -652,6 +630,7 @@ async def stats(message: Message):
 
 @router.message(F.text == "✅ Отметить день")
 async def today_button(message: Message):
+    await ensure_user(message.from_user.id)
     await ask_smoked(message.from_user.id)
 
 
@@ -662,9 +641,6 @@ async def stats_button(message: Message):
 
 @router.callback_query(F.data == "smoked:yes")
 async def smoked_yes(callback: CallbackQuery):
-    if await stop_if_completed(callback):
-        return
-
     user_id = callback.from_user.id
 
     await update_log(user_id, "smoked", 1)
@@ -681,9 +657,6 @@ async def smoked_yes(callback: CallbackQuery):
 
 @router.callback_query(F.data == "smoked:no")
 async def smoked_no(callback: CallbackQuery):
-    if await stop_if_completed(callback):
-        return
-
     user_id = callback.from_user.id
 
     await update_log(user_id, "smoked", 0)
@@ -699,9 +672,6 @@ async def smoked_no(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("sleep:"))
 async def sleep_answer(callback: CallbackQuery):
-    if await stop_if_completed(callback):
-        return
-
     value = 1 if callback.data.endswith("yes") else 0
 
     await update_log(callback.from_user.id, "sleep", value)
@@ -719,9 +689,6 @@ async def sleep_answer(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("water:"))
 async def water_answer(callback: CallbackQuery):
-    if await stop_if_completed(callback):
-        return
-
     value = 1 if callback.data.endswith("yes") else 0
 
     await update_log(callback.from_user.id, "water", value)
@@ -739,9 +706,6 @@ async def water_answer(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("food:"))
 async def food_answer(callback: CallbackQuery):
-    if await stop_if_completed(callback):
-        return
-
     value = 1 if callback.data.endswith("yes") else 0
 
     await update_log(callback.from_user.id, "food", value)
@@ -759,9 +723,6 @@ async def food_answer(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("rest:"))
 async def rest_answer(callback: CallbackQuery):
-    if await stop_if_completed(callback):
-        return
-
     value = 1 if callback.data.endswith("yes") else 0
     user_id = callback.from_user.id
 
@@ -778,8 +739,10 @@ async def rest_answer(callback: CallbackQuery):
     old_best = await calculate_best_streak(user_id, exclude_today=True)
     best = max(streak, old_best)
 
-    milestone = milestone_message(streak)
-    new_record = streak > old_best and streak > 1
+    already_completed = False
+    milestone = milestone_message(streak) if not already_completed else ""
+    new_record = streak > old_best and streak > 1 and not already_completed
+    day_points = format_day_points(shown_delta)
 
     text = (
         f"✅ День сохранён.\n\n"
@@ -788,7 +751,7 @@ async def rest_answer(callback: CallbackQuery):
         f"{get_context_thought(today_log)}\n\n"
         f"{get_tomorrow_advice(today_log)}\n\n"
         f"━━━━━━━━━━━━━━\n\n"
-        f"💪 Очки воли за день: {shown_delta}\n"
+        f"💪 Очки воли за день: {day_points}\n"
         f"Всего: {total}\n\n"
         f"🔥 Серия — {streak} дн.\n"
         f"🏆 Рекорд — {best} дн.\n\n"
@@ -828,12 +791,6 @@ async def check_reminders():
         already_sent = await was_reminder_sent(user_id)
 
         if already_sent:
-            continue
-
-        today_log = await get_today_log(user_id)
-
-        if today_log and today_log.get("completed") == 1:
-            await mark_reminder_sent(user_id)
             continue
 
         try:
