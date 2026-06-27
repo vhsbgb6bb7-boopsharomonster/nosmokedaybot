@@ -50,11 +50,11 @@ SUCCESS_THOUGHTS = [
 ]
 
 HARD_DAY_THOUGHTS = [
-    "Сегодня было непросто, но серию удалось сохранить.",
-    "Даже сложный день может закончиться хорошим результатом.",
-    "Не самый лёгкий день, но курс сохранён.",
-    "Сегодня было больше сопротивления, и именно поэтому результат ценнее.",
-    "Сложные дни тоже считаются. Иногда именно они укрепляют привычку сильнее всего.",
+    "Сегодня было непросто, но день всё равно сохранён.",
+    "Не самый лёгкий день, но это не отменяет весь путь.",
+    "Сегодня было больше сопротивления. Завтра будет новая попытка.",
+    "Сложные дни тоже часть процесса.",
+    "Главное — не застрять в этом дне и продолжить дальше.",
 ]
 
 SMOKED_SUPPORT_PHRASES = [
@@ -62,7 +62,7 @@ SMOKED_SUPPORT_PHRASES = [
     "Один день не определяет результат. Завтра можно начать новую серию.",
     "Такое бывает. Важно не застрять в этом дне и продолжить завтра.",
     "Срыв — это не конец. Это просто точка, от которой можно оттолкнуться.",
-    "Сегодня был непростой день. Завтра будет новая попытка.",
+    "Сегодня был непростой день. Всё ещё впереди.",
 ]
 
 SLEEP_YES_PHRASES = [
@@ -276,18 +276,17 @@ def calculate_willpower_delta(log):
         return 0
 
     smoked = log.get("smoked")
+
+    if smoked == 1:
+        return -10
+
     sleep = log.get("sleep")
     water = log.get("water")
     food = log.get("food")
     rest = log.get("rest")
     craving = log.get("craving")
 
-    points = 0
-
-    if smoked == 0:
-        points += 10
-    elif smoked == 1:
-        points -= 10
+    points = 10
 
     if sleep == 1:
         points += 2
@@ -309,7 +308,7 @@ def calculate_willpower_delta(log):
     elif rest == 0:
         points -= 1
 
-    if smoked == 0 and craving == 1:
+    if craving == 1:
         points += 3
 
     return points
@@ -443,6 +442,9 @@ async def calculate_best_streak(user_id: int, exclude_today=False):
 
 
 def next_goal_text(streak: int):
+    if streak == 0:
+        return "🎯 Следующая цель: 🥈 7 дней\nНачинаем новую серию."
+
     goals = [
         (3, "🥉 3 дня"),
         (7, "🥈 7 дней"),
@@ -475,6 +477,7 @@ def milestone_message(streak: int):
 
 
 def day_summary(log):
+    smoked = log.get("smoked")
     sleep = log.get("sleep")
     water = log.get("water")
     food = log.get("food")
@@ -484,23 +487,29 @@ def day_summary(log):
     lines = [
         "📅 Итог дня",
         "",
-        "🚭 Курение: ✅ нет",
+        f"🚭 Курение: {'✅ нет' if smoked == 0 else '❌ было'}",
         f"😴 Сон: {'✅' if sleep == 1 else '❌'}",
         f"💧 Вода: {'✅' if water == 1 else '❌'}",
         f"🍽 Питание: {'✅' if food == 1 else '❌'}",
         f"🛌 Отдых: {'✅' if rest == 1 else '❌'}",
-        f"🔥 Тяга: {'была' if craving == 1 else 'почти не мешала'}",
     ]
+
+    if smoked == 0:
+        lines.append(f"🔥 Тяга: {'была' if craving == 1 else 'почти не мешала'}")
 
     return "\n".join(lines)
 
 
 def get_context_thought(log):
+    smoked = log.get("smoked")
     sleep = log.get("sleep")
     water = log.get("water")
     food = log.get("food")
     rest = log.get("rest")
     craving = log.get("craving")
+
+    if smoked == 1:
+        return pick(SMOKED_SUPPORT_PHRASES)
 
     problems = 0
 
@@ -524,6 +533,7 @@ def get_context_thought(log):
 
 
 def get_tomorrow_advice(log):
+    smoked = log.get("smoked")
     sleep = log.get("sleep")
     water = log.get("water")
     food = log.get("food")
@@ -532,6 +542,8 @@ def get_tomorrow_advice(log):
 
     advice = []
 
+    if smoked == 1:
+        advice.append("🚭 начать новую серию")
     if sleep == 0:
         advice.append("😴 дать себе больше сна")
     if water == 0:
@@ -540,7 +552,7 @@ def get_tomorrow_advice(log):
         advice.append("🍽 поесть чуть ровнее")
     if rest == 0:
         advice.append("🛌 выделить время на отдых")
-    if craving == 1:
+    if smoked == 0 and craving == 1:
         advice.append("🔥 заранее подготовить замену моменту тяги")
 
     if not advice:
@@ -625,16 +637,12 @@ async def smoked_yes(callback: CallbackQuery):
     user_id = callback.from_user.id
 
     await update_log(user_id, "smoked", 1)
-    await update_log(user_id, "completed", 1)
-
-    _, total, shown_delta = await apply_willpower_points(user_id)
 
     await callback.message.edit_text(
-        f"Сегодня отмечен день с курением.\n\n"
+        "Сегодня отмечен день с курением.\n\n"
         f"{pick(SMOKED_SUPPORT_PHRASES)}\n\n"
-        f"💪 Очки воли за день: {shown_delta}\n"
-        f"Всего: {total}\n\n"
-        f"Завтра продолжаем."
+        "😴 Как сегодня со сном? Удалось выспаться?",
+        reply_markup=yes_no_keyboard("sleep")
     )
 
     await callback.answer()
@@ -709,29 +717,9 @@ async def food_answer(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("rest:"))
 async def rest_answer(callback: CallbackQuery):
     value = 1 if callback.data.endswith("yes") else 0
-
-    await update_log(callback.from_user.id, "rest", value)
-
-    phrase = pick(REST_YES_PHRASES if value else REST_NO_PHRASES)
-
-    await callback.message.edit_text(
-        f"{phrase}\n\n"
-        f"🔥 Было сильное желание закурить?",
-        reply_markup=yes_no_keyboard("craving")
-    )
-
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("craving:"))
-async def craving_answer(callback: CallbackQuery):
-    value = 1 if callback.data.endswith("yes") else 0
     user_id = callback.from_user.id
 
-    previous_log = await get_today_log(user_id)
-    already_completed = bool(previous_log and previous_log.get("completed") == 1)
-
-    await update_log(user_id, "craving", value)
+    await update_log(user_id, "rest", value)
     await update_log(user_id, "completed", 1)
 
     today_log = await get_today_log(user_id)
@@ -744,6 +732,7 @@ async def craving_answer(callback: CallbackQuery):
     old_best = await calculate_best_streak(user_id, exclude_today=True)
     best = max(streak, old_best)
 
+    already_completed = False
     milestone = milestone_message(streak) if not already_completed else ""
     new_record = streak > old_best and streak > 1 and not already_completed
 
@@ -800,16 +789,10 @@ async def check_reminders():
             await ask_smoked(user_id)
             await mark_reminder_sent(user_id)
 
-            print(
-                f"Reminder sent to {user_id} at {current_time}",
-                flush=True
-            )
+            print(f"Reminder sent to {user_id} at {current_time}", flush=True)
 
         except Exception as e:
-            print(
-                f"Reminder send error for {user_id}: {e}",
-                flush=True
-            )
+            print(f"Reminder send error for {user_id}: {e}", flush=True)
 
 
 async def reminder_loop():
@@ -826,9 +809,7 @@ async def reminder_loop():
 async def on_startup(bot: Bot):
     await bot.set_webhook(WEBHOOK_URL)
 
-    asyncio.create_task(
-        reminder_loop()
-    )
+    asyncio.create_task(reminder_loop())
 
     print("BOT STARTED", flush=True)
 
