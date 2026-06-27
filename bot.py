@@ -324,6 +324,13 @@ def visible_day_points(log, delta):
     return max(0, delta)
 
 
+def format_day_points(points: int):
+    if points > 0:
+        return f"+{points}"
+
+    return "0"
+
+
 async def apply_willpower_points(user_id: int):
     user = await get_user(user_id)
     today_log = await get_today_log(user_id)
@@ -735,6 +742,7 @@ async def rest_answer(callback: CallbackQuery):
     already_completed = False
     milestone = milestone_message(streak) if not already_completed else ""
     new_record = streak > old_best and streak > 1 and not already_completed
+    day_points = format_day_points(shown_delta)
 
     text = (
         f"✅ День сохранён.\n\n"
@@ -743,7 +751,7 @@ async def rest_answer(callback: CallbackQuery):
         f"{get_context_thought(today_log)}\n\n"
         f"{get_tomorrow_advice(today_log)}\n\n"
         f"━━━━━━━━━━━━━━\n\n"
-        f"💪 Очки воли за день: +{shown_delta}\n"
+        f"💪 Очки воли за день: {day_points}\n"
         f"Всего: {total}\n\n"
         f"🔥 Серия — {streak} дн.\n"
         f"🏆 Рекорд — {best} дн.\n\n"
