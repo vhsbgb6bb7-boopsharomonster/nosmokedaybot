@@ -276,18 +276,17 @@ def calculate_willpower_delta(log):
         return 0
 
     smoked = log.get("smoked")
+
+    if smoked == 1:
+        return -10
+
     sleep = log.get("sleep")
     water = log.get("water")
     food = log.get("food")
     rest = log.get("rest")
     craving = log.get("craving")
 
-    points = 0
-
-    if smoked == 1:
-        points -= 10
-    elif smoked == 0:
-        points += 10
+    points = 10
 
     if sleep == 1:
         points += 2
@@ -309,10 +308,11 @@ def calculate_willpower_delta(log):
     elif rest == 0:
         points -= 1
 
-    if smoked == 0 and craving == 1:
+    if craving == 1:
         points += 3
 
     return points
+
 
 def visible_day_points(log, delta):
     if not log:
@@ -326,7 +326,7 @@ def visible_day_points(log, delta):
 
 def format_day_points(points: int):
     if points > 0:
-        return str(points)
+        return f"+{points}"
 
     return "0"
 
@@ -579,71 +579,6 @@ async def ask_smoked(user_id: int):
     )
 
 
-def is_completed_log(log):
-    return bool(log and log.get("completed") == 1)
-
-
-async def send_already_marked(message: Message):
-    await message.answer(
-        "✅ Сегодня уже есть отметка за этот день.\n"
-        "Новая отметка не требуется.",
-        reply_markup=main_menu()
-    )
-
-
-async def answer_already_marked(callback: CallbackQuery):
-    await callback.answer(
-        "Сегодня уже есть отметка за этот день.",
-        show_alert=True
-    )
-
-
-async def start_or_continue_today(message: Message):
-    user_id = message.from_user.id
-
-    await ensure_user(user_id)
-
-    log = await get_today_log(user_id)
-
-    if is_completed_log(log):
-        await send_already_marked(message)
-        return
-
-    if not log or log.get("smoked") is None:
-        await ask_smoked(user_id)
-        return
-
-    if log.get("sleep") is None:
-        await message.answer(
-            "😴 Как сегодня со сном? Удалось выспаться?",
-            reply_markup=yes_no_keyboard("sleep")
-        )
-        return
-
-    if log.get("water") is None:
-        await message.answer(
-            "💧 Как сегодня с водой? Получилось выпить достаточно?",
-            reply_markup=yes_no_keyboard("water")
-        )
-        return
-
-    if log.get("food") is None:
-        await message.answer(
-            "🍽 Как сегодня с питанием? Получилось нормально поесть?",
-            reply_markup=yes_no_keyboard("food")
-        )
-        return
-
-    if log.get("rest") is None:
-        await message.answer(
-            "🛌 Был ли сегодня нормальный отдых?",
-            reply_markup=yes_no_keyboard("rest")
-        )
-        return
-
-    await send_already_marked(message)
-
-
 async def send_stats(message: Message):
     user_id = message.from_user.id
 
@@ -684,7 +619,8 @@ async def start(message: Message):
 
 @router.message(Command("today"))
 async def today(message: Message):
-    await start_or_continue_today(message)
+    await ensure_user(message.from_user.id)
+    await ask_smoked(message.from_user.id)
 
 
 @router.message(Command("stats"))
@@ -694,7 +630,8 @@ async def stats(message: Message):
 
 @router.message(F.text == "✅ Отметить день")
 async def today_button(message: Message):
-    await start_or_continue_today(message)
+    await ensure_user(message.from_user.id)
+    await ask_smoked(message.from_user.id)
 
 
 @router.message(F.text == "📊 Статистика")
@@ -705,11 +642,6 @@ async def stats_button(message: Message):
 @router.callback_query(F.data == "smoked:yes")
 async def smoked_yes(callback: CallbackQuery):
     user_id = callback.from_user.id
-
-    current_log = await get_today_log(user_id)
-    if is_completed_log(current_log):
-        await answer_already_marked(callback)
-        return
 
     await update_log(user_id, "smoked", 1)
 
@@ -727,11 +659,6 @@ async def smoked_yes(callback: CallbackQuery):
 async def smoked_no(callback: CallbackQuery):
     user_id = callback.from_user.id
 
-    current_log = await get_today_log(user_id)
-    if is_completed_log(current_log):
-        await answer_already_marked(callback)
-        return
-
     await update_log(user_id, "smoked", 0)
 
     await callback.message.edit_text(
@@ -745,16 +672,9 @@ async def smoked_no(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("sleep:"))
 async def sleep_answer(callback: CallbackQuery):
-    user_id = callback.from_user.id
-
-    current_log = await get_today_log(user_id)
-    if is_completed_log(current_log):
-        await answer_already_marked(callback)
-        return
-
     value = 1 if callback.data.endswith("yes") else 0
 
-    await update_log(user_id, "sleep", value)
+    await update_log(callback.from_user.id, "sleep", value)
 
     phrase = pick(SLEEP_YES_PHRASES if value else SLEEP_NO_PHRASES)
 
@@ -769,16 +689,9 @@ async def sleep_answer(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("water:"))
 async def water_answer(callback: CallbackQuery):
-    user_id = callback.from_user.id
-
-    current_log = await get_today_log(user_id)
-    if is_completed_log(current_log):
-        await answer_already_marked(callback)
-        return
-
     value = 1 if callback.data.endswith("yes") else 0
 
-    await update_log(user_id, "water", value)
+    await update_log(callback.from_user.id, "water", value)
 
     phrase = pick(WATER_YES_PHRASES if value else WATER_NO_PHRASES)
 
@@ -793,16 +706,9 @@ async def water_answer(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("food:"))
 async def food_answer(callback: CallbackQuery):
-    user_id = callback.from_user.id
-
-    current_log = await get_today_log(user_id)
-    if is_completed_log(current_log):
-        await answer_already_marked(callback)
-        return
-
     value = 1 if callback.data.endswith("yes") else 0
 
-    await update_log(user_id, "food", value)
+    await update_log(callback.from_user.id, "food", value)
 
     phrase = pick(FOOD_YES_PHRASES if value else FOOD_NO_PHRASES)
 
@@ -820,14 +726,8 @@ async def rest_answer(callback: CallbackQuery):
     value = 1 if callback.data.endswith("yes") else 0
     user_id = callback.from_user.id
 
-    current_log = await get_today_log(user_id)
-    if is_completed_log(current_log):
-        await answer_already_marked(callback)
-        return
-
     await update_log(user_id, "rest", value)
     await update_log(user_id, "completed", 1)
-    await mark_reminder_sent(user_id)
 
     today_log = await get_today_log(user_id)
 
@@ -868,11 +768,6 @@ async def rest_answer(callback: CallbackQuery):
 
     await callback.message.edit_text(text)
 
-    await callback.message.answer(
-        "‎",
-        reply_markup=main_menu()
-    )
-
     await callback.answer()
 
 
@@ -891,11 +786,6 @@ async def check_reminders():
         current_time = now.strftime("%H:%M")
 
         if current_time < reminder_time:
-            continue
-
-        today_log = await get_today_log(user_id)
-
-        if today_log:
             continue
 
         already_sent = await was_reminder_sent(user_id)
