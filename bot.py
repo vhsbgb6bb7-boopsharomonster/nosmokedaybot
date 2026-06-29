@@ -524,6 +524,16 @@ def day_summary(log):
 
     return "\n".join(lines)
 
+def smoking_money_text(log):
+    if not log or log.get("smoked") != 1:
+        return ""
+
+    spent = log.get("smoking_spent") or 0
+
+    return (
+        f"\n\n"
+        f"💸 Потрачено сегодня: {spent} ₽"
+    )
 
 def get_context_thought(log):
     smoked = log.get("smoked")
@@ -894,7 +904,8 @@ async def rest_answer(callback: CallbackQuery):
 
     text = (
         f"✅ День сохранён.\n\n"
-        f"{day_summary(today_log)}\n\n"
+        f"{day_summary(today_log)}"
+        f"{smoking_money_text(today_log)}\n\n"
         f"━━━━━━━━━━━━━━\n\n"
         f"{get_context_thought(today_log)}\n\n"
         f"{get_tomorrow_advice(today_log)}\n\n"
