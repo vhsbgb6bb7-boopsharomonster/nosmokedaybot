@@ -695,7 +695,6 @@ async def send_stats(message: Message):
         reply_markup=main_menu()
     )
 
-waiting_for_money = set()
 
 @router.message(Command("start"))
 async def start(message: Message):
@@ -771,12 +770,12 @@ async def smoked_yes(callback: CallbackQuery):
     WAITING_MONEY[user_id] = True
 
     await callback.message.edit_text(
-    "Сегодня отмечен день с курением.\n\n"
-    f"{pick(SMOKED_SUPPORT_PHRASES)}\n\n"
-    "💸 Сколько рублей сегодня ушло на сигареты?\n\n"
-    "Напиши только число.\n"
-    "Например: 350"
-)
+        "Сегодня отмечен день с курением.\n\n"
+        f"{pick(SMOKED_SUPPORT_PHRASES)}\n\n"
+        "💸 Сколько рублей сегодня ушло на сигареты?\n\n"
+        "Напиши только число.\n"
+        "Например: 350"
+    )
 
     await callback.answer()
 
