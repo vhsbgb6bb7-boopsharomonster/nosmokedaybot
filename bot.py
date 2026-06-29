@@ -732,12 +732,15 @@ async def smoked_yes(callback: CallbackQuery):
 
     await update_log(user_id, "smoked", 1)
 
-    await callback.message.edit_text(
-        "Сегодня отмечен день с курением.\n\n"
-        f"{pick(SMOKED_SUPPORT_PHRASES)}\n\n"
-        "😴 Как сегодня со сном? Удалось выспаться?",
-        reply_markup=yes_no_keyboard("sleep")
-    )
+WAITING_MONEY[user_id] = True
+
+await callback.message.edit_text(
+    "Сегодня отмечен день с курением.\n\n"
+    f"{pick(SMOKED_SUPPORT_PHRASES)}\n\n"
+    "💸 Сколько рублей сегодня ушло на сигареты?\n\n"
+    "Напиши только число.\n"
+    "Например: 350"
+)
 
     await callback.answer()
 
