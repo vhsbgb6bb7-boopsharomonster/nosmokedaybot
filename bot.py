@@ -720,6 +720,32 @@ async def today_button(message: Message):
 async def stats_button(message: Message):
     await send_stats(message)
 
+@router.message(F.text)
+async def money_input(message: Message):
+    user_id = message.from_user.id
+
+    if user_id not in WAITING_MONEY:
+        return
+
+    amount = parse_money(message.text)
+
+    if amount is None:
+        await message.answer(
+            "⚠️ Введите только сумму цифрами.\n"
+            "Например: 350",
+            reply_markup=main_menu()
+        )
+        return
+
+    await update_log(user_id, "smoking_spent", amount)
+
+    WAITING_MONEY.pop(user_id, None)
+
+    await message.answer(
+        "💸 Сумма записана.\n\n"
+        "😴 Как сегодня со сном? Удалось выспаться?",
+        reply_markup=yes_no_keyboard("sleep")
+    )
 
 @router.callback_query(F.data == "smoked:yes")
 async def smoked_yes(callback: CallbackQuery):
