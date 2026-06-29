@@ -332,6 +332,21 @@ def format_day_points(points: int):
 
     return "0"
 
+def parse_money(text: str):
+    if not text:
+        return None
+
+    cleaned = text.strip().replace(" ", "").replace(",", ".")
+
+    if not re.fullmatch(r"\d+(\.\d{1,2})?", cleaned):
+        return None
+
+    value = int(round(float(cleaned)))
+
+    if value < 0:
+        return None
+
+    return value
 
 async def apply_willpower_points(user_id: int):
     user = await get_user(user_id)
