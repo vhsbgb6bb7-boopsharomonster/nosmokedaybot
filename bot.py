@@ -252,6 +252,7 @@ async def update_log(user_id: int, field: str, value: int):
         "rest",
         "craving",
         "completed",
+        "smoking_spent",
         "willpower_delta",
     }
 
