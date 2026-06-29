@@ -668,6 +668,7 @@ async def send_stats(message: Message):
         reply_markup=main_menu()
     )
 
+waiting_for_money = set()
 
 @router.message(Command("start"))
 async def start(message: Message):
