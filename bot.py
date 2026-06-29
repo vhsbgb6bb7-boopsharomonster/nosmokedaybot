@@ -213,6 +213,7 @@ async def ensure_user(user_id: int):
         conflict="user_id",
     )
 
+WAITING_MONEY = {}
 
 async def get_user(user_id: int):
     rows = await supabase_get("users", f"?user_id=eq.{user_id}&select=*")
