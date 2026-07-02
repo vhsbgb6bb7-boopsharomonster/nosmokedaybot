@@ -953,8 +953,8 @@ async def check_reminders():
 
         today_log = await get_today_log(user_id)
 
-if is_completed_log(today_log):
-    continue
+        if is_completed_log(today_log):
+            continue
 
         already_sent = await was_reminder_sent(user_id)
 
