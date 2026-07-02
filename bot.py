@@ -935,10 +935,14 @@ async def rest_answer(callback: CallbackQuery):
 
 
 async def check_reminders():
+    print("CHECK_REMINDERS START", flush=True)
+
     users = await supabase_get(
         "users",
         "?select=user_id,reminder_time,timezone"
     )
+
+    print(f"USERS FOUND: {len(users)}", flush=True)
 
     for user in users:
         user_id = user["user_id"]
@@ -948,17 +952,25 @@ async def check_reminders():
         now = datetime.now(ZoneInfo(timezone))
         current_time = now.strftime("%H:%M")
 
+        print(
+            f"REMINDER CHECK user={user_id} now={current_time} target={reminder_time} timezone={timezone}",
+            flush=True
+        )
+
         if current_time < reminder_time:
+            print(f"SKIP user={user_id}: time not reached", flush=True)
             continue
 
         today_log = await get_today_log(user_id)
 
         if is_completed_log(today_log):
+            print(f"SKIP user={user_id}: day already completed", flush=True)
             continue
 
         already_sent = await was_reminder_sent(user_id)
 
         if already_sent:
+            print(f"SKIP user={user_id}: reminder already sent", flush=True)
             continue
 
         try:
@@ -969,7 +981,6 @@ async def check_reminders():
 
         except Exception as e:
             print(f"Reminder send error for {user_id}: {e}", flush=True)
-
 
 async def reminder_loop():
     while True:
