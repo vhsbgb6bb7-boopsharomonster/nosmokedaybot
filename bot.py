@@ -202,15 +202,21 @@ async def supabase_patch(table, params, data):
 
 
 async def ensure_user(user_id: int):
+    rows = await supabase_get(
+        "users",
+        f"?user_id=eq.{user_id}&select=user_id"
+    )
+
+    if rows:
+        return
+
     await supabase_post(
         "users",
         {
             "user_id": user_id,
             "reminder_time": DEFAULT_TIME,
             "timezone": DEFAULT_TIMEZONE,
-        },
-        upsert=True,
-        conflict="user_id",
+        }
     )
 
 WAITING_MONEY = {}
