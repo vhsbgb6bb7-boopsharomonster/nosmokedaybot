@@ -410,34 +410,45 @@ async def calculate_streak(user_id: int):
         f"?user_id=eq.{user_id}&select=date,smoked&order=date.desc"
     )
 
-    logs = {row["date"]: row for row in rows}
+    marked_logs = []
+
+    for row in rows:
+        if row.get("smoked") is None:
+            continue
+
+        marked_logs.append(row)
+
+    if not marked_logs:
+        return 0
+
+    latest_log = marked_logs[0]
+
+    if latest_log.get("smoked") != 0:
+        return 0
 
     streak = 0
-    today = await get_today(user_id)
-    current_date = datetime.fromisoformat(today).date()
+    expected_date = datetime.fromisoformat(latest_log["date"]).date()
+
+    logs_by_date = {
+        row["date"]: row
+        for row in marked_logs
+    }
 
     while True:
-        key = current_date.isoformat()
-        row = logs.get(key)
+        key = expected_date.isoformat()
+        row = logs_by_date.get(key)
 
         if not row:
             break
 
-        smoked = row.get("smoked")
-
-        if smoked is None:
-            current_date -= timedelta(days=1)
-            continue
-
-        if smoked == 0:
+        if row.get("smoked") == 0:
             streak += 1
-            current_date -= timedelta(days=1)
+            expected_date -= timedelta(days=1)
             continue
 
         break
 
     return streak
-
 
 async def calculate_best_streak(user_id: int, exclude_today=False):
     today = await get_today(user_id)
