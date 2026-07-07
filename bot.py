@@ -1,4 +1,4 @@
-import os
+(import os
 import asyncio
 import random
 from datetime import datetime, timedelta
@@ -654,13 +654,13 @@ async def send_week_report(message: Message):
     completed_count = len(completed_logs)
 
     habits = {
-    "сон": sleep_good,
-    "вода": water_good,
-    "питание": food_good,
-    "отдых": rest_good,
-}
+        "сон": sleep_good,
+        "вода": water_good,
+        "питание": food_good,
+        "отдых": rest_good,
+    }
 
-if completed_logs:
+    if completed_logs:
     min_value = min(habits.values())
 
     weakest_habits = [
@@ -682,7 +682,7 @@ if completed_logs:
             + weakest_habits[-1]
         )
 
-else:
+    else:
     weakest_text = None
 
     if completed_count == 0:
