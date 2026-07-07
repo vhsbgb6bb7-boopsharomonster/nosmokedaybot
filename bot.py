@@ -753,6 +753,9 @@ async def today(message: Message):
 async def stats(message: Message):
     await send_stats(message)
 
+@router.message(Command("week"))
+async def week(message: Message):
+    await send_week_report(message)
 
 @router.message(F.text == "✅ Отметить день")
 async def today_button(message: Message):
