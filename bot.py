@@ -221,8 +221,6 @@ async def get_user(user_id: int):
 
     await ensure_user(user_id)
     
-    streak = await calculate_streak(user_id)
-    best = await calculate_best_streak(user_id)
 
     rows = await supabase_get("users", f"?user_id=eq.{user_id}&select=*")
     return rows[0]
@@ -585,6 +583,9 @@ async def send_week_report(message: Message):
     user_id = message.from_user.id
 
     await ensure_user(user_id)
+    
+    streak = await calculate_streak(user_id)
+    best = await calculate_best_streak(user_id)
 
     user = await get_user(user_id)
     timezone = user.get("timezone") or DEFAULT_TIMEZONE
