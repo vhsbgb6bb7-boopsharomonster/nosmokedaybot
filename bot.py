@@ -660,7 +660,7 @@ async def send_week_report(message: Message):
         "отдых": rest_good,
     }
 
-        if completed_logs:
+    if completed_logs:
         min_value = min(habits.values())
 
         weakest_habits = [
