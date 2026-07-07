@@ -578,6 +578,132 @@ async def ask_smoked(user_id: int):
         reply_markup=yes_no_keyboard("smoked")
     )
 
+async def send_week_report(message: Message):
+    user_id = message.from_user.id
+
+    await ensure_user(user_id)
+
+    user = await get_user(user_id)
+    timezone = user.get("timezone") or DEFAULT_TIMEZONE
+
+    today = datetime.now(ZoneInfo(timezone)).date()
+    start_date = today - timedelta(days=6)
+
+    rows = await supabase_get(
+        "daily_logs",
+        (
+            f"?user_id=eq.{user_id}"
+            f"&date=gte.{start_date.isoformat()}"
+            f"&date=lte.{today.isoformat()}"
+            f"&select=*"
+            f"&order=date.asc"
+        )
+    )
+
+    completed_logs = [
+        row for row in rows
+        if row.get("completed") == 1
+    ]
+
+    smoke_free_days = sum(
+        1 for row in completed_logs
+        if row.get("smoked") == 0
+    )
+
+    smoked_days = sum(
+        1 for row in completed_logs
+        if row.get("smoked") == 1
+    )
+
+    sleep_good = sum(
+        1 for row in completed_logs
+        if row.get("sleep") == 1
+    )
+
+    water_good = sum(
+        1 for row in completed_logs
+        if row.get("water") == 1
+    )
+
+    food_good = sum(
+        1 for row in completed_logs
+        if row.get("food") == 1
+    )
+
+    rest_good = sum(
+        1 for row in completed_logs
+        if row.get("rest") == 1
+    )
+
+    smoking_spent = sum(
+        row.get("smoking_spent") or 0
+        for row in completed_logs
+    )
+
+    week_points = sum(
+        visible_day_points(
+            row,
+            row.get("willpower_delta") or 0
+        )
+        for row in completed_logs
+    )
+
+    completed_count = len(completed_logs)
+
+    habits = {
+        "сон": sleep_good,
+        "вода": water_good,
+        "питание": food_good,
+        "отдых": rest_good,
+    }
+
+    weakest_habit = min(
+        habits,
+        key=habits.get
+    ) if completed_logs else None
+
+    if completed_count == 0:
+        conclusion = (
+            "Пока недостаточно данных для вывода. "
+            "Отмечай дни, и здесь появится анализ недели."
+        )
+
+    elif smoke_free_days == completed_count:
+        conclusion = (
+            "Неделя идёт без курения. "
+            "Главное — сохранить этот ритм."
+        )
+
+    elif smoke_free_days > smoked_days:
+        conclusion = (
+            f"Большая часть отмеченных дней прошла без курения. "
+            f"Зона внимания — {weakest_habit}."
+        )
+
+    else:
+        conclusion = (
+            f"Неделя получилась непростой. "
+            f"На следующей неделе стоит обратить внимание на: "
+            f"{weakest_habit}."
+        )
+
+    text = (
+        f"📅 Отчёт за 7 дней\n\n"
+        f"🚭 Без курения: {smoke_free_days} дн.\n"
+        f"🚬 С курением: {smoked_days} дн.\n"
+        f"💪 Очки воли за неделю: {week_points}\n"
+        f"💸 Потрачено на сигареты: {smoking_spent} ₽\n\n"
+        f"😴 Сон: {sleep_good}/{completed_count}\n"
+        f"💧 Вода: {water_good}/{completed_count}\n"
+        f"🍽 Питание: {food_good}/{completed_count}\n"
+        f"🛌 Отдых: {rest_good}/{completed_count}\n\n"
+        f"💬 {conclusion}"
+    )
+
+    await message.answer(
+        text,
+        reply_markup=main_menu()
+    )
 
 async def send_stats(message: Message):
     user_id = message.from_user.id
