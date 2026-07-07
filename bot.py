@@ -660,30 +660,30 @@ async def send_week_report(message: Message):
         "отдых": rest_good,
     }
 
-    if completed_logs:
+        if completed_logs:
         min_value = min(habits.values())
 
         weakest_habits = [
-        name
-        for name, value in habits.items()
-        if value == min_value
+            name
+            for name, value in habits.items()
+            if value == min_value
         ]
 
-            if len(weakest_habits) == 1:
+        if len(weakest_habits) == 1:
             weakest_text = weakest_habits[0]
 
         elif len(weakest_habits) == 2:
-        weakest_text = " и ".join(weakest_habits)
+            weakest_text = " и ".join(weakest_habits)
+
+        else:
+            weakest_text = (
+                ", ".join(weakest_habits[:-1])
+                + " и "
+                + weakest_habits[-1]
+            )
 
     else:
-        weakest_text = (
-            ", ".join(weakest_habits[:-1])
-            + " и "
-            + weakest_habits[-1]
-        )
-
-    else:
-    weakest_text = None
+        weakest_text = None
 
     if completed_count == 0:
         conclusion = (
