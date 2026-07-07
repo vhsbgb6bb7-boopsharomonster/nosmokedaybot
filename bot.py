@@ -220,6 +220,9 @@ async def get_user(user_id: int):
         return rows[0]
 
     await ensure_user(user_id)
+    
+    streak = await calculate_streak(user_id)
+    best = await calculate_best_streak(user_id)
 
     rows = await supabase_get("users", f"?user_id=eq.{user_id}&select=*")
     return rows[0]
@@ -697,20 +700,22 @@ else:
     elif smoke_free_days > smoked_days:
         conclusion = (
             f"Большая часть отмеченных дней прошла без курения. "
-            f"Зона внимания — {weakest_habit}."
+            f"Зона внимания — {weakest_text}."
         )
 
     else:
         conclusion = (
             f"Неделя получилась непростой. "
             f"На следующей неделе стоит обратить внимание на: "
-            f"{weakest_habit}."
+            f"{weakest_text}."
         )
 
     text = (
         f"📅 Отчёт за 7 дней\n\n"
         f"🚭 Без курения: {smoke_free_days} дн.\n"
-        f"🚬 С курением: {smoked_days} дн.\n"
+        f"🚬 С курением: {smoked_days} дн.\n\n"
+        f"🔥 Текущая серия: {streak} дн.\n"
+        f"🏆 Лучший результат: {best} дн.\n\n"
         f"💪 Очки воли за неделю: {week_points}\n"
         f"💸 Потрачено на сигареты: {smoking_spent} ₽\n\n"
         f"😴 Сон: {sleep_good}/{completed_count}\n"
