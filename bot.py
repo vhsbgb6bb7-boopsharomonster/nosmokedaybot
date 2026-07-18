@@ -841,9 +841,9 @@ async def send_stats(message: Message):
     )
 
 
-@router.message(Command("start"))
-async def start(message: Message):
-    await ensure_user(message.from_user.id)
+@router.message(Command("today"))
+async def today(message: Message):
+    await start_or_continue_today(message)
 
     await message.answer(
         "👋 Привет.\n\n"
@@ -871,8 +871,7 @@ async def week(message: Message):
 
 @router.message(F.text == "✅ Отметить день")
 async def today_button(message: Message):
-    await ensure_user(message.from_user.id)
-    await ask_smoked(message.from_user.id)
+    await start_or_continue_today(message)
 
 
 @router.message(F.text == "📊 Статистика")
