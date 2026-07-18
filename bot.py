@@ -201,15 +201,21 @@ async def supabase_patch(table, params, data):
 
 
 async def ensure_user(user_id: int):
+    rows = await supabase_get(
+        "users",
+        f"?user_id=eq.{user_id}&select=user_id"
+    )
+
+    if rows:
+        return
+
     await supabase_post(
         "users",
         {
             "user_id": user_id,
             "reminder_time": DEFAULT_TIME,
             "timezone": DEFAULT_TIMEZONE,
-        },
-        upsert=True,
-        conflict="user_id",
+        }
     )
 
 
@@ -390,34 +396,30 @@ async def mark_reminder_sent(user_id: int):
 async def calculate_streak(user_id: int):
     rows = await supabase_get(
         "daily_logs",
-        f"?user_id=eq.{user_id}&select=date,smoked&order=date.desc"
+        (
+            f"?user_id=eq.{user_id}"
+            f"&select=date,smoked,completed"
+            f"&order=date.desc"
+        )
     )
 
-    logs = {row["date"]: row for row in rows}
-
     streak = 0
-    today = await get_today(user_id)
-    current_date = datetime.fromisoformat(today).date()
 
-    while True:
-        key = current_date.isoformat()
-        row = logs.get(key)
-
-        if not row:
-            break
+    for row in rows:
+        if row.get("completed") != 1:
+            continue
 
         smoked = row.get("smoked")
 
         if smoked is None:
-            current_date -= timedelta(days=1)
             continue
 
         if smoked == 0:
             streak += 1
-            current_date -= timedelta(days=1)
             continue
 
-        break
+        if smoked == 1:
+            break
 
     return streak
 
