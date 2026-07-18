@@ -398,28 +398,47 @@ async def calculate_streak(user_id: int):
         "daily_logs",
         (
             f"?user_id=eq.{user_id}"
+            f"&completed=eq.1"
             f"&select=date,smoked,completed"
             f"&order=date.desc"
         )
     )
 
+    valid_logs = [
+        row
+        for row in rows
+        if row.get("smoked") is not None
+    ]
+
+    if not valid_logs:
+        return 0
+
+    latest_log = valid_logs[0]
+
+    if latest_log.get("smoked") != 0:
+        return 0
+
+    logs_by_date = {
+        row["date"]: row
+        for row in valid_logs
+    }
+
     streak = 0
+    expected_date = datetime.fromisoformat(
+        latest_log["date"]
+    ).date()
 
-    for row in rows:
-        if row.get("completed") != 1:
-            continue
+    while True:
+        row = logs_by_date.get(expected_date.isoformat())
 
-        smoked = row.get("smoked")
-
-        if smoked is None:
-            continue
-
-        if smoked == 0:
-            streak += 1
-            continue
-
-        if smoked == 1:
+        if not row:
             break
+
+        if row.get("smoked") != 0:
+            break
+
+        streak += 1
+        expected_date -= timedelta(days=1)
 
     return streak
 
