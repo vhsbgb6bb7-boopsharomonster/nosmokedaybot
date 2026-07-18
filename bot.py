@@ -883,6 +883,12 @@ async def stats_button(message: Message):
 async def smoked_yes(callback: CallbackQuery):
     user_id = callback.from_user.id
 
+    current_log = await get_today_log(user_id)
+
+    if is_completed_log(current_log):
+        await answer_already_marked(callback)
+        return
+
     await update_log(user_id, "smoked", 1)
 
     await callback.message.edit_text(
@@ -898,6 +904,12 @@ async def smoked_yes(callback: CallbackQuery):
 @router.callback_query(F.data == "smoked:no")
 async def smoked_no(callback: CallbackQuery):
     user_id = callback.from_user.id
+
+    current_log = await get_today_log(user_id)
+
+    if is_completed_log(current_log):
+        await answer_already_marked(callback)
+        return
 
     await update_log(user_id, "smoked", 0)
 
