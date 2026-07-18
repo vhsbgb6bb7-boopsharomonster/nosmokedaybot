@@ -797,11 +797,16 @@ async def send_week_report(message: Message):
             "Отмечай дни, и здесь появится анализ недели."
         )
 
-    elif smoke_free_days == completed_count:
-        conclusion = (
-            "Неделя идёт без курения. "
-            "Главное — сохранить этот ритм."
-        )
+    elif completed_count >= 5 and smoke_free_days == completed_count:
+    conclusion = (
+        "Неделя идёт без курения. "
+        "Главное — сохранить этот ритм."
+    )
+elif smoke_free_days == completed_count:
+    conclusion = (
+        "Пока все отмеченные дни прошли без курения. "
+        "Продолжай в том же духе."
+    )
 
     elif smoke_free_days > smoked_days:
         conclusion = (
