@@ -924,9 +924,17 @@ async def smoked_no(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("sleep:"))
 async def sleep_answer(callback: CallbackQuery):
+    user_id = callback.from_user.id
+
+    current_log = await get_today_log(user_id)
+
+    if is_completed_log(current_log):
+        await answer_already_marked(callback)
+        return
+
     value = 1 if callback.data.endswith("yes") else 0
 
-    await update_log(callback.from_user.id, "sleep", value)
+    await update_log(user_id, "sleep", value)
 
     phrase = pick(SLEEP_YES_PHRASES if value else SLEEP_NO_PHRASES)
 
@@ -941,9 +949,17 @@ async def sleep_answer(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("water:"))
 async def water_answer(callback: CallbackQuery):
+    user_id = callback.from_user.id
+
+    current_log = await get_today_log(user_id)
+
+    if is_completed_log(current_log):
+        await answer_already_marked(callback)
+        return
+
     value = 1 if callback.data.endswith("yes") else 0
 
-    await update_log(callback.from_user.id, "water", value)
+    await update_log(user_id, "water", value)
 
     phrase = pick(WATER_YES_PHRASES if value else WATER_NO_PHRASES)
 
@@ -958,9 +974,17 @@ async def water_answer(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("food:"))
 async def food_answer(callback: CallbackQuery):
+    user_id = callback.from_user.id
+
+    current_log = await get_today_log(user_id)
+
+    if is_completed_log(current_log):
+        await answer_already_marked(callback)
+        return
+
     value = 1 if callback.data.endswith("yes") else 0
 
-    await update_log(callback.from_user.id, "food", value)
+    await update_log(user_id, "food", value)
 
     phrase = pick(FOOD_YES_PHRASES if value else FOOD_NO_PHRASES)
 
@@ -975,11 +999,19 @@ async def food_answer(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("rest:"))
 async def rest_answer(callback: CallbackQuery):
-    value = 1 if callback.data.endswith("yes") else 0
     user_id = callback.from_user.id
+
+    current_log = await get_today_log(user_id)
+
+    if is_completed_log(current_log):
+        await answer_already_marked(callback)
+        return
+
+    value = 1 if callback.data.endswith("yes") else 0
 
     await update_log(user_id, "rest", value)
     await update_log(user_id, "completed", 1)
+    await mark_reminder_sent(user_id)
 
     today_log = await get_today_log(user_id)
 
@@ -1040,6 +1072,15 @@ async def check_reminders():
         if current_time < reminder_time:
             continue
 
+        today_log = await get_today_log(user_id)
+
+        if is_completed_log(today_log):
+            print(
+                f"SKIP user={user_id}: day already completed",
+                flush=True
+            )
+            continue
+
         already_sent = await was_reminder_sent(user_id)
 
         if already_sent:
@@ -1049,10 +1090,16 @@ async def check_reminders():
             await ask_smoked(user_id)
             await mark_reminder_sent(user_id)
 
-            print(f"Reminder sent to {user_id} at {current_time}", flush=True)
+            print(
+                f"Reminder sent to {user_id} at {current_time}",
+                flush=True
+            )
 
         except Exception as e:
-            print(f"Reminder send error for {user_id}: {e}", flush=True)
+            print(
+                f"Reminder send error for {user_id}: {e}",
+                flush=True
+            )
 
 
 async def reminder_loop():
