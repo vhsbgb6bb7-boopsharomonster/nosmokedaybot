@@ -580,6 +580,90 @@ async def ask_smoked(user_id: int):
         "🚬 Сегодня было курение?",
         reply_markup=yes_no_keyboard("smoked")
     )
+    
+def is_completed_log(log):
+    return bool(log and log.get("completed") == 1)
+
+
+async def send_already_marked(message: Message):
+    await message.answer(
+        "✅ Сегодня уже есть отметка за этот день.\n"
+        "Новая отметка не требуется.",
+        reply_markup=main_menu()
+    )
+
+
+async def answer_already_marked(callback: CallbackQuery):
+    await callback.answer(
+        "Сегодня уже есть отметка за этот день.",
+        show_alert=True
+    )
+
+
+async def start_or_continue_today(message: Message):
+    user_id = message.from_user.id
+
+    await ensure_user(user_id)
+
+    user = await get_user(user_id)
+    timezone = user.get("timezone") or DEFAULT_TIMEZONE
+    reminder_time = user.get("reminder_time") or DEFAULT_TIME
+
+    now = datetime.now(ZoneInfo(timezone))
+    current_time = now.strftime("%H:%M")
+
+    log = await get_today_log(user_id)
+
+    # День уже полностью заполнен
+    if is_completed_log(log):
+        await send_already_marked(message)
+        return
+
+    # Опрос ещё не начинался, но время напоминания не наступило
+    if not log or log.get("smoked") is None:
+        if current_time < reminder_time:
+            await message.answer(
+                f"⏳ Отметка за сегодняшний день будет доступна после "
+                f"{reminder_time}.\n\n"
+                "Если автоматическое напоминание не придёт, "
+                "после этого времени можно нажать кнопку вручную.",
+                reply_markup=main_menu()
+            )
+            return
+
+        await ask_smoked(user_id)
+        return
+
+    # Если опрос был начат, продолжаем с места остановки
+    if log.get("sleep") is None:
+        await message.answer(
+            "😴 Как сегодня со сном? Удалось выспаться?",
+            reply_markup=yes_no_keyboard("sleep")
+        )
+        return
+
+    if log.get("water") is None:
+        await message.answer(
+            "💧 Как сегодня с водой? Получилось выпить достаточно?",
+            reply_markup=yes_no_keyboard("water")
+        )
+        return
+
+    if log.get("food") is None:
+        await message.answer(
+            "🍽 Как сегодня с питанием? Получилось нормально поесть?",
+            reply_markup=yes_no_keyboard("food")
+        )
+        return
+
+    if log.get("rest") is None:
+        await message.answer(
+            "🛌 Был ли сегодня нормальный отдых?",
+            reply_markup=yes_no_keyboard("rest")
+        )
+        return
+
+    await send_already_marked(message)
 
 async def send_week_report(message: Message):
     user_id = message.from_user.id
