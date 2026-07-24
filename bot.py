@@ -65,6 +65,12 @@ SMOKED_SUPPORT_PHRASES = [
     "Сегодня был непростой день. Всё ещё впереди.",
 ]
 
+SMOKED_WITH_CARE_PHRASES = [
+    "Сегодня был срыв, но часть опор всё равно удалось сохранить.",
+    "Серия закончилась, но забота о себе сегодня всё равно имеет значение.",
+    "Да, сегодня было курение. Но сон, вода, питание или отдых всё равно помогают вернуться в ритм.",
+]
+
 SLEEP_YES_PHRASES = [
     "😴 Сон сегодня поддержал восстановление.",
     "🌙 Хороший сон — сильная база для следующего дня.",
@@ -201,21 +207,15 @@ async def supabase_patch(table, params, data):
 
 
 async def ensure_user(user_id: int):
-    rows = await supabase_get(
-        "users",
-        f"?user_id=eq.{user_id}&select=user_id"
-    )
-
-    if rows:
-        return
-
     await supabase_post(
         "users",
         {
             "user_id": user_id,
             "reminder_time": DEFAULT_TIME,
             "timezone": DEFAULT_TIMEZONE,
-        }
+        },
+        upsert=True,
+        conflict="user_id",
     )
 
 
@@ -226,7 +226,6 @@ async def get_user(user_id: int):
         return rows[0]
 
     await ensure_user(user_id)
-    
 
     rows = await supabase_get("users", f"?user_id=eq.{user_id}&select=*")
     return rows[0]
@@ -247,6 +246,11 @@ async def get_today_log(user_id: int):
     )
 
     return rows[0] if rows else None
+
+
+async def is_today_completed(user_id: int):
+    log = await get_today_log(user_id)
+    return bool(log and log.get("completed") == 1)
 
 
 async def update_log(user_id: int, field: str, value: int):
@@ -283,17 +287,13 @@ def calculate_willpower_delta(log):
         return 0
 
     smoked = log.get("smoked")
-
-    if smoked == 1:
-        return -10
-
     sleep = log.get("sleep")
     water = log.get("water")
     food = log.get("food")
     rest = log.get("rest")
     craving = log.get("craving")
 
-    points = 10
+    points = -10 if smoked == 1 else 10
 
     if sleep == 1:
         points += 2
@@ -315,7 +315,7 @@ def calculate_willpower_delta(log):
     elif rest == 0:
         points -= 1
 
-    if craving == 1:
+    if smoked == 0 and craving == 1:
         points += 3
 
     return points
@@ -329,13 +329,6 @@ def visible_day_points(log, delta):
         return 0
 
     return max(0, delta)
-
-
-def format_day_points(points: int):
-    if points > 0:
-        return f"+{points}"
-
-    return "0"
 
 
 async def apply_willpower_points(user_id: int):
@@ -396,49 +389,34 @@ async def mark_reminder_sent(user_id: int):
 async def calculate_streak(user_id: int):
     rows = await supabase_get(
         "daily_logs",
-        (
-            f"?user_id=eq.{user_id}"
-            f"&completed=eq.1"
-            f"&select=date,smoked,completed"
-            f"&order=date.desc"
-        )
+        f"?user_id=eq.{user_id}&select=date,smoked&order=date.desc"
     )
 
-    valid_logs = [
-        row
-        for row in rows
-        if row.get("smoked") is not None
-    ]
-
-    if not valid_logs:
-        return 0
-
-    latest_log = valid_logs[0]
-
-    if latest_log.get("smoked") != 0:
-        return 0
-
-    logs_by_date = {
-        row["date"]: row
-        for row in valid_logs
-    }
+    logs = {row["date"]: row for row in rows}
 
     streak = 0
-    expected_date = datetime.fromisoformat(
-        latest_log["date"]
-    ).date()
+    today = await get_today(user_id)
+    current_date = datetime.fromisoformat(today).date()
 
     while True:
-        row = logs_by_date.get(expected_date.isoformat())
+        key = current_date.isoformat()
+        row = logs.get(key)
 
         if not row:
             break
 
-        if row.get("smoked") != 0:
-            break
+        smoked = row.get("smoked")
 
-        streak += 1
-        expected_date -= timedelta(days=1)
+        if smoked is None:
+            current_date -= timedelta(days=1)
+            continue
+
+        if smoked == 0:
+            streak += 1
+            current_date -= timedelta(days=1)
+            continue
+
+        break
 
     return streak
 
@@ -538,6 +516,11 @@ def get_context_thought(log):
     craving = log.get("craving")
 
     if smoked == 1:
+        positive_care = sum(1 for value in [sleep, water, food, rest] if value == 1)
+
+        if positive_care >= 2:
+            return pick(SMOKED_WITH_CARE_PHRASES)
+
         return pick(SMOKED_SUPPORT_PHRASES)
 
     problems = 0
@@ -549,7 +532,7 @@ def get_context_thought(log):
     if craving == 1:
         problems += 1
 
-    if problems >= 3:
+    if problems >= 4:
         return pick(HARD_DAY_THOUGHTS)
 
     if craving == 1:
@@ -594,253 +577,22 @@ def get_tomorrow_advice(log):
 
 
 async def ask_smoked(user_id: int):
+    await ensure_user(user_id)
+
+    if await is_today_completed(user_id):
+        await bot.send_message(
+            user_id,
+            "Сегодняшний день уже сохранён. Новое отмечание не требуется.",
+            reply_markup=main_menu()
+        )
+        return
+
     await bot.send_message(
         user_id,
         "🚬 Сегодня было курение?",
         reply_markup=yes_no_keyboard("smoked")
     )
-    
-def is_completed_log(log):
-    return bool(log and log.get("completed") == 1)
 
-
-async def send_already_marked(message: Message):
-    await message.answer(
-        "✅ Сегодня уже есть отметка за этот день.\n"
-        "Новая отметка не требуется.",
-        reply_markup=main_menu()
-    )
-
-
-async def answer_already_marked(callback: CallbackQuery):
-    await callback.answer(
-        "Сегодня уже есть отметка за этот день.",
-        show_alert=True
-    )
-
-
-async def start_or_continue_today(message: Message):
-    user_id = message.from_user.id
-
-    await ensure_user(user_id)
-
-    user = await get_user(user_id)
-    timezone = user.get("timezone") or DEFAULT_TIMEZONE
-    reminder_time = user.get("reminder_time") or DEFAULT_TIME
-
-    now = datetime.now(ZoneInfo(timezone))
-    current_time = now.strftime("%H:%M")
-
-    log = await get_today_log(user_id)
-
-    # День уже полностью заполнен
-    if is_completed_log(log):
-        await send_already_marked(message)
-        return
-
-    # Опрос ещё не начинался, но время напоминания не наступило
-    if not log or log.get("smoked") is None:
-        if current_time < reminder_time:
-            await message.answer(
-                f"⏳ Отметка за сегодняшний день будет доступна после "
-                f"{reminder_time}.\n\n"
-                "Если автоматическое напоминание не придёт, "
-                "после этого времени можно нажать кнопку вручную.",
-                reply_markup=main_menu()
-            )
-            return
-
-        await ask_smoked(user_id)
-        return
-
-    # Если опрос был начат, продолжаем с места остановки
-    if log.get("sleep") is None:
-        await message.answer(
-            "😴 Как сегодня со сном? Удалось выспаться?",
-            reply_markup=yes_no_keyboard("sleep")
-        )
-        return
-
-    if log.get("water") is None:
-        await message.answer(
-            "💧 Как сегодня с водой? Получилось выпить достаточно?",
-            reply_markup=yes_no_keyboard("water")
-        )
-        return
-
-    if log.get("food") is None:
-        await message.answer(
-            "🍽 Как сегодня с питанием? Получилось нормально поесть?",
-            reply_markup=yes_no_keyboard("food")
-        )
-        return
-
-    if log.get("rest") is None:
-        await message.answer(
-            "🛌 Был ли сегодня нормальный отдых?",
-            reply_markup=yes_no_keyboard("rest")
-        )
-        return
-
-    await send_already_marked(message)
-
-async def send_week_report(message: Message):
-    user_id = message.from_user.id
-
-    await ensure_user(user_id)
-    
-    streak = await calculate_streak(user_id)
-    best = await calculate_best_streak(user_id)
-
-    user = await get_user(user_id)
-    timezone = user.get("timezone") or DEFAULT_TIMEZONE
-
-    today = datetime.now(ZoneInfo(timezone)).date()
-    start_date = today - timedelta(days=6)
-
-    rows = await supabase_get(
-        "daily_logs",
-        (
-            f"?user_id=eq.{user_id}"
-            f"&date=gte.{start_date.isoformat()}"
-            f"&date=lte.{today.isoformat()}"
-            f"&select=*"
-            f"&order=date.asc"
-        )
-    )
-
-    completed_logs = [
-        row for row in rows
-        if row.get("completed") == 1
-    ]
-
-    smoke_free_days = sum(
-        1 for row in completed_logs
-        if row.get("smoked") == 0
-    )
-
-    smoked_days = sum(
-        1 for row in completed_logs
-        if row.get("smoked") == 1
-    )
-
-    sleep_good = sum(
-        1 for row in completed_logs
-        if row.get("sleep") == 1
-    )
-
-    water_good = sum(
-        1 for row in completed_logs
-        if row.get("water") == 1
-    )
-
-    food_good = sum(
-        1 for row in completed_logs
-        if row.get("food") == 1
-    )
-
-    rest_good = sum(
-        1 for row in completed_logs
-        if row.get("rest") == 1
-    )
-
-    smoking_spent = sum(
-        row.get("smoking_spent") or 0
-        for row in completed_logs
-    )
-
-    week_points = sum(
-        visible_day_points(
-            row,
-            row.get("willpower_delta") or 0
-        )
-        for row in completed_logs
-    )
-
-    completed_count = len(completed_logs)
-
-    habits = {
-        "сон": sleep_good,
-        "вода": water_good,
-        "питание": food_good,
-        "отдых": rest_good,
-    }
-
-    if completed_logs:
-        min_value = min(habits.values())
-
-        weakest_habits = [
-            name
-            for name, value in habits.items()
-            if value == min_value
-        ]
-
-        if len(weakest_habits) == 1:
-            weakest_text = weakest_habits[0]
-
-        elif len(weakest_habits) == 2:
-            weakest_text = " и ".join(weakest_habits)
-
-        else:
-            weakest_text = (
-                ", ".join(weakest_habits[:-1])
-                + " и "
-                + weakest_habits[-1]
-            )
-
-    else:
-        weakest_text = None
-
-    if completed_count == 0:
-        conclusion = (
-            "Пока недостаточно данных для вывода. "
-            "Отмечай дни, и здесь появится анализ недели."
-        )
-
-    elif completed_count >= 5 and smoke_free_days == completed_count:
-        conclusion = (
-            "Неделя идёт без курения. "
-            "Главное — сохранить этот ритм."
-        )
-        
-    elif smoke_free_days == completed_count:
-        conclusion = (
-            "Пока все отмеченные дни прошли без курения. "
-            "Продолжай в том же духе."
-        )
-
-    elif smoke_free_days > smoked_days:
-        conclusion = (
-            f"Большая часть отмеченных дней прошла без курения. "
-            f"Зона внимания — {weakest_text}."
-        )
-
-    else:
-        conclusion = (
-            f"Неделя получилась непростой. "
-            f"На следующей неделе стоит обратить внимание на: "
-            f"{weakest_text}."
-        )
-
-    text = (
-        f"📅 Отчёт за 7 дней\n\n"
-        f"🚭 Без курения: {smoke_free_days} дн.\n"
-        f"🚬 С курением: {smoked_days} дн.\n\n"
-        f"🔥 Текущая серия: {streak} дн.\n"
-        f"🏆 Лучший результат: {best} дн.\n\n"
-        f"💪 Очки воли за неделю: {week_points}\n"
-        f"💸 Потрачено на сигареты: {smoking_spent} ₽\n\n"
-        f"😴 Сон: {sleep_good}/{completed_count}\n"
-        f"💧 Вода: {water_good}/{completed_count}\n"
-        f"🍽 Питание: {food_good}/{completed_count}\n"
-        f"🛌 Отдых: {rest_good}/{completed_count}\n\n"
-        f"💬 {conclusion}"
-    )
-
-    await message.answer(
-        text,
-        reply_markup=main_menu()
-    )
 
 async def send_stats(message: Message):
     user_id = message.from_user.id
@@ -866,9 +618,17 @@ async def send_stats(message: Message):
     )
 
 
-@router.message(Command("today"))
-async def today(message: Message):
-    await start_or_continue_today(message)
+async def stop_if_completed(callback: CallbackQuery):
+    if await is_today_completed(callback.from_user.id):
+        await callback.answer("Сегодняшний день уже сохранён.", show_alert=False)
+        return True
+
+    return False
+
+
+@router.message(Command("start"))
+async def start(message: Message):
+    await ensure_user(message.from_user.id)
 
     await message.answer(
         "👋 Привет.\n\n"
@@ -882,7 +642,6 @@ async def today(message: Message):
 
 @router.message(Command("today"))
 async def today(message: Message):
-    await ensure_user(message.from_user.id)
     await ask_smoked(message.from_user.id)
 
 
@@ -890,13 +649,10 @@ async def today(message: Message):
 async def stats(message: Message):
     await send_stats(message)
 
-@router.message(Command("week"))
-async def week(message: Message):
-    await send_week_report(message)
 
 @router.message(F.text == "✅ Отметить день")
 async def today_button(message: Message):
-    await start_or_continue_today(message)
+    await ask_smoked(message.from_user.id)
 
 
 @router.message(F.text == "📊 Статистика")
@@ -906,13 +662,10 @@ async def stats_button(message: Message):
 
 @router.callback_query(F.data == "smoked:yes")
 async def smoked_yes(callback: CallbackQuery):
-    user_id = callback.from_user.id
-
-    current_log = await get_today_log(user_id)
-
-    if is_completed_log(current_log):
-        await answer_already_marked(callback)
+    if await stop_if_completed(callback):
         return
+
+    user_id = callback.from_user.id
 
     await update_log(user_id, "smoked", 1)
 
@@ -928,13 +681,10 @@ async def smoked_yes(callback: CallbackQuery):
 
 @router.callback_query(F.data == "smoked:no")
 async def smoked_no(callback: CallbackQuery):
-    user_id = callback.from_user.id
-
-    current_log = await get_today_log(user_id)
-
-    if is_completed_log(current_log):
-        await answer_already_marked(callback)
+    if await stop_if_completed(callback):
         return
+
+    user_id = callback.from_user.id
 
     await update_log(user_id, "smoked", 0)
 
@@ -949,17 +699,12 @@ async def smoked_no(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("sleep:"))
 async def sleep_answer(callback: CallbackQuery):
-    user_id = callback.from_user.id
-
-    current_log = await get_today_log(user_id)
-
-    if is_completed_log(current_log):
-        await answer_already_marked(callback)
+    if await stop_if_completed(callback):
         return
 
     value = 1 if callback.data.endswith("yes") else 0
 
-    await update_log(user_id, "sleep", value)
+    await update_log(callback.from_user.id, "sleep", value)
 
     phrase = pick(SLEEP_YES_PHRASES if value else SLEEP_NO_PHRASES)
 
@@ -974,17 +719,12 @@ async def sleep_answer(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("water:"))
 async def water_answer(callback: CallbackQuery):
-    user_id = callback.from_user.id
-
-    current_log = await get_today_log(user_id)
-
-    if is_completed_log(current_log):
-        await answer_already_marked(callback)
+    if await stop_if_completed(callback):
         return
 
     value = 1 if callback.data.endswith("yes") else 0
 
-    await update_log(user_id, "water", value)
+    await update_log(callback.from_user.id, "water", value)
 
     phrase = pick(WATER_YES_PHRASES if value else WATER_NO_PHRASES)
 
@@ -999,17 +739,12 @@ async def water_answer(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("food:"))
 async def food_answer(callback: CallbackQuery):
-    user_id = callback.from_user.id
-
-    current_log = await get_today_log(user_id)
-
-    if is_completed_log(current_log):
-        await answer_already_marked(callback)
+    if await stop_if_completed(callback):
         return
 
     value = 1 if callback.data.endswith("yes") else 0
 
-    await update_log(user_id, "food", value)
+    await update_log(callback.from_user.id, "food", value)
 
     phrase = pick(FOOD_YES_PHRASES if value else FOOD_NO_PHRASES)
 
@@ -1024,19 +759,14 @@ async def food_answer(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("rest:"))
 async def rest_answer(callback: CallbackQuery):
-    user_id = callback.from_user.id
-
-    current_log = await get_today_log(user_id)
-
-    if is_completed_log(current_log):
-        await answer_already_marked(callback)
+    if await stop_if_completed(callback):
         return
 
     value = 1 if callback.data.endswith("yes") else 0
+    user_id = callback.from_user.id
 
     await update_log(user_id, "rest", value)
     await update_log(user_id, "completed", 1)
-    await mark_reminder_sent(user_id)
 
     today_log = await get_today_log(user_id)
 
@@ -1048,10 +778,8 @@ async def rest_answer(callback: CallbackQuery):
     old_best = await calculate_best_streak(user_id, exclude_today=True)
     best = max(streak, old_best)
 
-    already_completed = False
-    milestone = milestone_message(streak) if not already_completed else ""
-    new_record = streak > old_best and streak > 1 and not already_completed
-    day_points = format_day_points(shown_delta)
+    milestone = milestone_message(streak)
+    new_record = streak > old_best and streak > 1
 
     text = (
         f"✅ День сохранён.\n\n"
@@ -1060,7 +788,7 @@ async def rest_answer(callback: CallbackQuery):
         f"{get_context_thought(today_log)}\n\n"
         f"{get_tomorrow_advice(today_log)}\n\n"
         f"━━━━━━━━━━━━━━\n\n"
-        f"💪 Очки воли за день: {day_points}\n"
+        f"💪 Очки воли за день: {shown_delta}\n"
         f"Всего: {total}\n\n"
         f"🔥 Серия — {streak} дн.\n"
         f"🏆 Рекорд — {best} дн.\n\n"
@@ -1097,34 +825,25 @@ async def check_reminders():
         if current_time < reminder_time:
             continue
 
-        today_log = await get_today_log(user_id)
-
-        if is_completed_log(today_log):
-            print(
-                f"SKIP user={user_id}: day already completed",
-                flush=True
-            )
-            continue
-
         already_sent = await was_reminder_sent(user_id)
 
         if already_sent:
+            continue
+
+        today_log = await get_today_log(user_id)
+
+        if today_log and today_log.get("completed") == 1:
+            await mark_reminder_sent(user_id)
             continue
 
         try:
             await ask_smoked(user_id)
             await mark_reminder_sent(user_id)
 
-            print(
-                f"Reminder sent to {user_id} at {current_time}",
-                flush=True
-            )
+            print(f"Reminder sent to {user_id} at {current_time}", flush=True)
 
         except Exception as e:
-            print(
-                f"Reminder send error for {user_id}: {e}",
-                flush=True
-            )
+            print(f"Reminder send error for {user_id}: {e}", flush=True)
 
 
 async def reminder_loop():
